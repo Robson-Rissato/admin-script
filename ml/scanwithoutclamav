@@ -1,0 +1,37 @@
+#!/bin/bash
+
+if [ ! -x /usr/bin/curl ]; then
+        echo 'Needs /usr/bin/curl';
+        exit;
+fi
+
+if [ ! -x /usr/bin/stat ]; then
+        echo 'Requires /usr/bin/stat';
+        exit;
+fi
+
+echo -n 'Scanning in this directory ';
+echo `pwd`;
+
+sleep 2s;
+
+for file in `find -type f`; do
+        if [ -f "$file" ]; then
+                size=$(stat -c%s $file);
+                # 3mb limit for speed
+                if [ ! "$size" -lt "3000000" ]; then
+                        echo "${file} is bigger than 3MB skipping";
+                        continue;
+                fi
+
+                check=`curl --silent --connect-timeout 10 -X POST --form "nodisplayclean=1" --form "fileToUpload=@${file}" --form "submit=apache" https://scanner.interserver.net/wpscan`;
+                        if [ "$?" = "0" ]; then
+                                if [ ! "$check" = "" ]; then
+                                        echo "${file} ${check}"
+                                fi
+                        else
+                                echo 'Bad exit code of curl';
+                        fi
+        fi
+done
+

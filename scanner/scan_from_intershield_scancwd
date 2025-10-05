@@ -1,0 +1,34 @@
+#!/bin/bash
+
+# run a scan and preforms actions based on ownership of files in scancwd
+
+if [ -d /opt/intershield/tmp/scancwd ]; then
+        dfolder=$(date +%Y%m%d);
+        if [ -d /opt/intershield/tmp/scancwd/${dfolder} ]; then
+                cd /opt/intershield/tmp/scancwd/${dfolder}
+                list=$(stat -c %U * | sort | uniq);
+                for myuser in $list; do
+                        if [ "${myuser}" = "root" ]; then
+                                continue;
+                        fi
+                        echo "working on ${myuser}";
+                        if [ -f /var/cpanel/users/${myuser} ]; then
+                                eval cd "~${myuser}" && /admin/clamscan justdb q && /admin/wp/cpanel_wpmanager ${myuser}
+				eval cd "~${myuser}"
+				pwd=`pwd`;  
+				# well lets confirm we are in the right dir
+				myhomedir=$(grep ^${myuser}: | cut -d: -f6)
+				if [ "$pwd" = "$myhomedir" ]; then
+					echo "Wordpress scanning $pwd";
+					for i in `find -maxdepth 4 | grep wp-config.php$ | cut -d/ -f2`; do cd ${pwd}/${i}/; echo y | /admin/wp/isup; sudo -u ${myuser} /opt/intershield/usr/wp; done
+				else
+					echo 'Not in the correct dir to scan wp installs';
+				fi
+				
+                        else
+                                echo 'no cpanel file for user';
+                        fi
+                done
+
+        fi
+fi

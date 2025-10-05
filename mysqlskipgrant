@@ -1,0 +1,37 @@
+#!/bin/sh
+
+# /************************************************************************************\
+# * Trouble Free Admin Center                                                          *
+# * (c)2002 Interserver.net                                                            *
+# * ---------------------------------------------------------------------------------- *
+# * Description: Skip mysql grant tables                                               *
+# \************************************************************************************/
+
+
+echo "Run this if you have forgot your MySQL root password, continue [y/N]? "
+read wait
+if [ "$wait" = "y" ]; then
+	if [ -e /etc/init.d/mysql ]; then
+		/etc/init.d/mysql stop
+	elif [ -e /etc/init.d/mysqld ]; then
+		/etc/init.d/mysqld stop
+	else
+ 		hostname="$(hostname)"
+ 		pid="$(cat /var/lib/mysql/$hostname.pid)"
+ 		kill $pid
+	fi
+	if [ -e /usr/bin/safe_mysqld ]; then
+		mysqlb=/usr/bin/safe_mysqld;
+	elif [ -e /usr/bin/mysqld_safe ]; then
+		mysqlb=/usr/bin/mysqld_safe;
+	fi
+	if [ "$mysqlb" = "" ]; then
+		echo "can not find mysql binary";
+		exit;
+	fi
+ 	$mysqlb --datadir=/var/lib/mysql --pid-file=/var/lib/mysql/$hostname.pid --skip-grant-tables &
+ 	sleep 2s;
+ 	echo "You should quickly reset the mysql password now, and restart the mysql server"
+else
+ 	echo "bye!"
+fi

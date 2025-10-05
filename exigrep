@@ -1,0 +1,40 @@
+#!/bin/sh
+
+# usage ./exigrep [-1d]
+
+if [ -e /etc/master.passwd ]; then
+        LOC='/usr/local/sbin';
+else
+        LOC='/usr/sbin';
+fi
+
+
+# sanity checks
+if [ ! -e $LOC/exiqgrep ]; then
+	echo 'exiqgrep does not exist';
+	exit;
+fi
+
+if [ ! -e $LOC/exim ]; then
+	echo 'exim does not exist';
+	exit;
+fi
+
+if [ ! -e /usr/bin/xargs ]; then
+	echo '/usr/bin/xargs does not exist';
+	exit;
+fi
+
+# default time (2 days)
+TIME='172800';
+
+# switch for 1 day
+if [ "$1" = "-1d" ]; then
+	TIME='86400';	
+fi
+
+echo "Removing mail older than $TIME seconds";
+
+
+# remove old messages from queue
+$LOC/exiqgrep -i -o $TIME | /usr/bin/xargs $LOC/exim -Mrm

@@ -1,0 +1,44 @@
+#!/bin/sh
+
+#replace /usr/local/directadmin/dataskq /admin/storage/directadmin_cron -- /etc/cron.d/directadmin_cron
+
+# This limits directadmin cron from running too many times on high load systems
+# additionally if the load is high we start running /admin/storage/kill_slow_queries.sh to kill slow selects and sleeping queries in mysql
+# the idea came from cloudlinux mysql govenor which has a switch to do the same
+
+limitload='20';
+stopload='50';
+curload=`awk '{print $1}' /proc/loadavg  | cut -d. -f1`;
+
+# if tty exists we are NOT running by cron and lets display debugging
+if [ -t 1 ] ; then 
+	echo -n `hostname`;
+	echo -n ' ';
+	echo -n `date`;
+	echo -n ' current load ';
+	echo $curload;
+fi
+
+if [ ! -x /usr/local/directadmin/dataskq ]; then
+	exit;
+fi
+
+if [ "$curload" -gt "$limitload" ]; then
+        echo 'Limiting dataskq to 1';
+	if [ "`ps ax | grep -c [d]ataskq`" -eq 0 ]; then
+		ionice -c2 -n7 nice -n 19 /usr/local/directadmin/dataskq
+	else
+		echo 'dataskq in limited mode and already running';
+	fi
+
+	if [ -x /admin/storage/kill_slow_queries.sh ]; then
+		/admin/storage/kill_slow_queries.sh
+	fi
+elif [ "$curload" -gt "$stopload" ]; then
+        echo 'Skipping /usr/local/directadmin/dataskq due to load';
+	if [ -x /admin/storage/kill_slow_queries.sh ]; then
+                /admin/storage/kill_slow_queries.sh
+        fi
+else
+        nice -n 2 /usr/local/directadmin/dataskq
+fi

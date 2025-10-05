@@ -1,0 +1,9 @@
+#0d896c2e7fd54f722b399f407e48a4c6  ruby-2.3.1.tar.gz
+NAME='ruby';
+VERSION='2.3.1';
+MD5='0d896c2e7fd54f722b399f407e48a4c6';
+EXT='tar.gz';
+DEPS='gcc gcc-c++ openssl-devel';
+CONFIG='./configure --prefix=/opt/ruby';
+MAKE='make';
+MAKEINSTALL='make install';

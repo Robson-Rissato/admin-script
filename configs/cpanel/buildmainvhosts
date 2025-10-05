@@ -1,0 +1,123 @@
+#!/usr/bin/env bash
+
+# build main shared vhosts
+# John Quaglieri <john@interserver.net>
+
+# load common functions like regex to verify ipv4
+if [ -f /admin/includes/common_bash_functions ]; then
+        source /admin/includes/common_bash_functions
+else
+        echo 'Missing /admin/includes/common_bash_functions';
+        exit 1;
+fi
+
+if [ ! -d /usr/local/cpanel ]; then
+        exit 1;
+fi
+
+if [ ! -f /etc/apache2/conf.d/includes/pre_virtualhost_global.conf ]; then
+        exit 1;
+fi
+
+mainfile='/etc/apache2/conf.d/includes/main_vhost.conf';
+tmpfile='/etc/apache2/conf.d/includes/main_vhost.conf.tmp';
+hostname=`hostname`;
+
+
+if [ "$hostname" = "" ]; then
+        echo 'got blank hostname';
+        exit 1;
+fi
+
+if [ -f ${tmpfile} ]; then
+        /bin/rm -v ${tmpfile}
+fi
+
+touch ${tmpfile}
+if [ ! -f /admin/.info/cpanel_main_ips ]; then
+	touch /admin/.info/cpanel_main_ips
+fi
+
+for ip in `egrep -h "=isshared|=mainip" /etc/reservedipreasons /admin/.info/cpanel_main_ips | cut -d= -f1; cat /var/cpanel/mainip`; do
+        check_ip ${ip}
+        if [ "$?" -eq 1 ]; then
+                echo "Found ip ${ip}";
+
+cat >> ${tmpfile} <<EOF
+
+<VirtualHost $ip:80>
+    ServerName $hostname
+    DocumentRoot /var/www/html
+    ServerAdmin root@$hostname
+
+    <Directory "/var/www/html">
+      AllowOverride All
+    </Directory>
+
+
+    <IfModule suphp_module>
+        suPHP_UserGroup nobody nobody
+    </IfModule>
+
+</VirtualHost>
+
+
+EOF
+
+# begin ssl
+if [ -f /var/cpanel/ssl/cpanel/mycpanel.pem ]; then
+
+cat >> ${tmpfile} <<EOF
+<VirtualHost $ip:443>
+    ServerName $hostname
+    DocumentRoot /var/www/html
+
+    ServerAdmin root@$hostname
+    <IfModule suphp_module>
+        suPHP_UserGroup nobody nobody
+    </IfModule>
+    <Directory "/">
+        AllowOverride All
+    </Directory>
+        UserDir disabled
+    <IfModule ssl_module>
+        SSLEngine on
+
+
+        SSLCertificateFile /var/cpanel/ssl/cpanel/mycpanel.pem
+        SSLCertificateKeyFile /var/cpanel/ssl/cpanel/mycpanel.pem
+        SSLCertificateChainFile /var/cpanel/ssl/cpanel/mycpanel.pem
+
+    </IfModule>
+
+    UseCanonicalName Off
+
+    <IfModule security2_module>
+        SecRuleEngine On
+    </IfModule>
+</VirtualHost>
+
+EOF
+
+
+fi
+# end ssl
+
+        else
+                echo 'Invalid ip ';
+                continue;
+        fi
+done
+
+echo "built ${tmpfile}";
+mv -v -f ${tmpfile} ${mainfile}
+
+check=`grep "^Include ${mainfile}$" /etc/apache2/conf.d/includes/pre_virtualhost_global.conf`;
+if [ "$check" = "" ]; then
+        echo 'adding in include';
+        echo Include ${mainfile} >> /etc/apache2/conf.d/includes/pre_virtualhost_global.conf
+else
+        echo 'Include found';
+fi
+
+/admin/res httpd

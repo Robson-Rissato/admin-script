@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+
+if [ ! -f /etc/master.passwd ]; then
+	echo 'not freebsd?';
+	exit;
+fi
+
+if [ ! -d /var/service ]; then 
+	echo 'not mailbaby?';
+	exit;
+fi
+
+echo 'Basic debugging';
+echo 'ram';
+sysctl hw | egrep 'hw.(phys|user|real)'
+if [ -f /var/run/dmesg.boot ]; then
+	grep memory /var/run/dmesg.boot 
+fi
+
+sysctl kern.ipc.somaxconn
+uptime
+echo
+sleep 1;
+
+echo 'Checking for out of memory errors';
+memory=`dmesg | egrep "failed to reclaim|killed"`;
+if [ ! "$memory" = "" ]; then
+	echo "Warning system needs mor ram";
+	printf ${memory};
+	sleep 1;
+fi
+
+check=`dmesg | grep "Listen queue overflow"`;
+if [ "$check" = "" ]; then
+	echo 'No errors in dmesg may not need any optimization';
+else
+	echo 'Listen queue overflow detected';
+	dmesg | grep "Listen queue overflow" | tail -n 5
+	echo
+	netstat -Lan | grep "127.0.0.1.11333"
+	echo '(qlen/incqlen/maxqlen) FreeBSD allows receiving 1.5 times connections than the limit before it starts to discard the new connections'; 
+	echo 'You may increase the limit using sysctl kern.ipc.somaxconn=4096';
+
+	echo 'Current setting';
+	sysctl kern.ipc.somaxconn
+	sysctl=`grep kern.ipc.somaxconn /etc/sysctl.conf`;
+	if [ "$sysctl" = "" ]; then
+		echo 'There are no overrides in /etc/sysctl.conf (change here and run /etc/rc.d/sysctl reload)';
+	else
+		echo '/etc/sysctl.conf has a change for kern.ipc.somaxconn already';
+	fi
+fi

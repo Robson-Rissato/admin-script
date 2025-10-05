@@ -1,0 +1,8 @@
+NAME='lighttpd';
+VERSION='1.4.13';
+MD5='d775d6478391b95d841a1018c8db0b95';
+EXT='tar.gz';
+DEPS='gcc gcc-c++ pcre-devel zlib-devel';
+CONFIG='./configure --prefix=/usr/local';
+MAKE='make';
+MAKEINSTALL='make install';

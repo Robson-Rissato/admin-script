@@ -1,0 +1,17 @@
+#!/bin/sh
+
+if [ -e /var/lib/mysql/mysql.sock ]; then
+
+	if [ ! -h /tmp/mysql.sock ]; then
+		ln -sf /var/lib/mysql/mysql.sock /tmp/mysql.sock
+		echo "Linked /tmp/mysql.sock";
+	fi
+
+	if [ -e /var/tmp ]; then
+		if [ ! -h /var/tmp/mysql.sock ]; then
+			ln -sf /var/lib/mysql/mysql.sock /var/tmp/mysql.sock
+			echo "Linked /var/tmp/mysql.sock";
+		fi
+	fi
+
+fi

@@ -1,0 +1,3 @@
+#!/bin/sh
+
+echo 'define kvmtemplates No longer in use';

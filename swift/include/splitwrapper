@@ -1,0 +1,116 @@
+#!/usr/bin/env bash
+
+running_dir=$(dirname $0);
+
+if [ ! -f ${running_dir}/../swift.include ]; then
+        echo 'Missing swift.include file';
+        exit;
+fi
+
+. ${running_dir}/../swift.include
+
+if [ -f ${running_dir}/../swift.kludge ]; then
+	. ${running_dir}/../swift.kludge
+fi
+
+# rewrite md5check of split upload to not reuse code
+
+randomshm=`/admin/randompass swift`;
+
+if [ "$WRCONTAINER" = "" ]; then
+        echo 'No container sent';
+        exit;
+fi
+
+if [ "$FILE" = "" ]; then
+        echo 'No File variable sent';
+        exit;
+fi
+
+if [ "$WRREALFILE" = "" ]; then
+        echo 'No Realfile variable sent';
+        exit;
+fi
+
+if [ -e /etc/master.passwd ]; then
+	TMP_DIR=/tmp;
+else
+	TMP_DIR=/dev/shm;
+fi
+
+mkdir -p $TMP_DIR/$randomshm
+
+if [ -f $TMP_DIR/$randomshm/$FILE ]; then
+        echo "$TMP_DIR/$randomshm/$FILE exists exiting";
+        exit;
+fi
+
+if [ $# -eq 0 ]; then
+	# some calls we do not want to gzip. In this case it appears cat is our only option when using the split filter
+	if [ "$NOGZIP" = "1" ]; then
+        	cat > $TMP_DIR/$randomshm/$FILE
+	else
+	# we used to call cat, but I was thinking as usual cat may be redundant. It works but is there a better way.
+	# there is we can call gzip. We are already calling gzip then cat, why both?
+		# initial zstd support
+		# both support --fast - ugh not on ubuntu 18
+		# both support -c to stdout
+		if [ -x /usr/bin/zstd ]; then
+			/usr/bin/zstd -3 -c > $TMP_DIR/$randomshm/$FILE
+		else
+			${gzip} --fast -c > $TMP_DIR/$randomshm/$FILE
+		fi
+	fi
+else
+        echo "exiting no data sent";
+        exit;
+fi
+
+# verify
+# md5sum test  | awk '{print $1}'
+if [ ! -f $TMP_DIR/$randomshm/$FILE ]; then
+        echo "$TMP_DIR/$randomshm/$FILE does not exist, we have some error";
+        exit;
+fi
+
+#md5
+if [ -e /etc/master.passwd ]; then
+	localmd5=`md5 $TMP_DIR/$randomshm/$FILE | awk '{print $4}'`
+else
+	localmd5=`md5sum $TMP_DIR/$randomshm/$FILE | awk '{print $1}'`
+fi
+if [ "$localmd5" = "" ]; then
+        echo 'ERROR: Returned a blank localmd5';
+else
+        echo "Found md5sum $localmd5";
+        $my_path/isput $WRCONTAINER $TMP_DIR/$randomshm/${FILE} ${WRREALFILE}/split-${FILE}
+	sleep 0.1s;
+        remotemd5=`$my_path/getsig $WRCONTAINER ${WRREALFILE}/split-${FILE}`;
+        echo "Got REMOTE md5sum $remotemd5";
+	if [ "$localmd5" = "$remotemd5" ]; then
+		echo "Check sum matches"
+	else
+		echo "1x Failed check sum match, re-uploading";
+		for retrysplitupload in 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+			$my_path/isput $WRCONTAINER $TMP_DIR/$randomshm/${FILE} ${WRREALFILE}/split-${FILE}
+			sleep 1s;
+			remotemd5=`$my_path/getsig $WRCONTAINER ${WRREALFILE}/split-${FILE}`;
+			if [ "$localmd5" = "$remotemd5" ]; then
+				echo "$retrysplitupload retry -  Check sum matches"
+				break;
+			else
+				echo "Upload failed time $retrysplitupload local $localmd5 remote $remotemd5";
+				if [ "$retrysplitupload" = "21" ]; then
+					echo '21 uploads tried - not trying again';
+				fi
+			fi
+		done
+	fi
+fi
+
+/bin/rm -v $TMP_DIR/$randomshm/$FILE
+
+echo "done on $FILE upload to $WRCONTAINER";
+echo "";
+
+/bin/rmdir -v $TMP_DIR/$randomshm

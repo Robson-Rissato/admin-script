@@ -1,0 +1,5 @@
+#!/bin/sh
+
+perl -pi -e 's/#define SERVICE_FIRST_STATUS_TIMEOUT_SECS 30/#define SERVICE_FIRST_STATUS_TIMEOUT_SECS 120/' /usr/local/directadmin/custombuild/dovecot-*/src/master/service.h
+#./configure --prefix=/usr --sysconfdir=/etc --localstatedir=/var --with-systemdsystemunitdir=/etc/systemd/system --without-icu
+./configure --with-ldap=yes --with-pam=yes --prefix=/usr --sysconfdir=/etc --localstatedir=/var --without-icu

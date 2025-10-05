@@ -1,0 +1,15 @@
+#!/bin/bash
+
+if [ -f /root/.swift/config ]; then
+	if [ -d /usr/local/lsws ]; then
+		if [ -d /usr/local/cpanel ]; then
+			/admin/configs/fixcf; /admin/configs/imforce.sh; /usr/local/lsws/admin/misc/lsup.sh -f -v 5.4.7; yum -y update; /scripts/check_cpanel_rpms --fix
+			if [ -d /usr/local/cpanel/3rdparty/share/clamav ]; then
+				if [ ! -f /usr/local/cpanel/3rdparty/share/clamav/whitelist.ign2 ]; then
+					cp /admin/configs/whitelist.ign2 /usr/local/cpanel/3rdparty/share/clamav/whitelist.ign2
+						/admin/clamscan cp fast
+				fi
+			fi	
+		fi
+	fi
+fi

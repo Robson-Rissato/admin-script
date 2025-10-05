@@ -1,0 +1,17 @@
+#!/bin/bash
+
+if [ ! -e /proc/user_beancounters ]; then
+	echo 'Requires OpenVZ';
+	exit;
+fi
+
+if [ ! "$1" = "" ]; then
+	if [ ! -f /etc/vz/conf/$1.conf ]; then
+		echo "VZid $1 not found";
+		exit;
+	fi
+	cat /proc/user_beancounters  | grep -A 23 $1: 
+
+else
+	echo "Usage ./viewbean vzid";
+fi

@@ -1,0 +1,10 @@
+#!/bin/bash
+
+if [ -e /proc/sys/net/ipv4/ip_conntrack_max ]; then
+	echo 256000 > /proc/sys/net/ipv4/ip_conntrack_max
+elif [ -e /proc/sys/net/nf_conntrack_max ]; then
+	echo 256000 > /proc/sys/net/nf_conntrack_max
+else
+	echo 'Can not find conntrack max';
+fi
+

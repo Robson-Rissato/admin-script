@@ -1,0 +1,10 @@
+#mainline
+#92666d60410f429ddbdb10060369a480  nginx-1.11.4.tar.gz
+NAME='nginx';
+VERSION='1.11.4';
+MD5='92666d60410f429ddbdb10060369a480';
+EXT='tar.gz';
+DEPS='gcc gcc-c++ pcre-devel zlib-devel';
+CONFIG='./configure --prefix=/usr/local/nginx --with-http_ssl_module --without-mail_pop3_module --without-mail_imap_module --without-mail_smtp_module --with-http_realip_module';
+MAKE='make';
+MAKEINSTALL='make install';

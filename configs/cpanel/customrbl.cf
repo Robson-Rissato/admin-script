@@ -1,0 +1,12 @@
+urirhssub INTERSERVER_RULE_URIBL_RBLINT rbluri.interserver.net. A 127.0.0.2
+body INTERSERVER_RULE_URIBL_RBLINT eval:check_uridnsbl('INTERSERVER_RULE_URIBL_RBLINT')
+describe INTERSERVER_RULE_URIBL_RBLINT Contains a URL listed in the uribl at sigs.interserver.net
+tflags INTERSERVER_RULE_URIBL_RBLINT net
+score INTERSERVER_RULE_URIBL_RBLINT 1.0
+
+urirhssub INVAL_RULE_URIBL_RBLINT uri.invaluement.interserver.net. A 127.0.0.2
+body INVAL_RULE_URIBL_RBLINT eval:check_uridnsbl('INVAL_RULE_URIBL_RBLINT')
+describe INVAL_RULE_URIBL_RBLINT Contains a URL listed in the uribl at invaluement
+tflags INVAL_RULE_URIBL_RBLINT net
+score INVAL_RULE_URIBL_RBLINT 2.0
+

@@ -1,0 +1,96 @@
+#!/bin/sh
+
+# /admin/findbadrpms --advanced --skip-rpmbackup|reinstall
+
+ #-
+ # Copyright (c) 2006 InterServer, Inc.
+ # All rights reserved.
+ #
+ # Redistribution and use in source and binary forms, with or without
+ # modification, are permitted provided that the following conditions
+ # are met:
+ # 1. Redistributions of source code must retain the above copyright
+ #    notice, this list of conditions and the following disclaimer.
+ # 2. Redistributions in binary form must reproduce the above copyright
+ #    notice, this list of conditions and the following disclaimer in the
+ #    documentation and/or other materials provided with the distribution.
+ # 3. All advertising materials mentioning features or use of this software
+ #    must display the following acknowledgement:
+ #        This product includes software developed by InterServer, Inc and
+ #        its contributors.
+ # 4. Neither the name of InterServer, Inc nor the names of its
+ #    contributors may be used to endorse or promote products derived
+ #    from this software without specific prior written permission.
+ #
+ # THIS SOFTWARE IS PROVIDED BY INTERSERVER, INC. AND CONTRIBUTORS
+ # ``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
+ # TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ # PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE COMPANY OR CONTRIBUTORS
+ # BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ # CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ # SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ # INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ # CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ # ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ # POSSIBILITY OF SUCH DAMAGE.
+ #/
+
+
+
+if [ "$1" = "--advanced" ]; then
+
+	if [ ! "$2" = "--skip-rpmbackup" ]; then
+		echo "Backing up rpm database";
+		cd /var/lib
+		if [ -e rpm.tgz ]; then
+			mv -f rpm.tgz rpm.tgz.old
+		fi
+		tar -zcf rpm.tgz rpm
+	fi
+
+	if [ "$2" = "--reinstall" ]; then
+		reinstall=1;
+	fi
+
+	# exclude kernel / perl / exim / mysql (cpanel servers)
+	for i in $(rpm -qa --queryformat "%{NAME}\n" | grep -v -e ^rpmdb-CentOS -e ^kernel -e ^exim -e ^MySQL -e ^mysql -e ^frontpage -e ^perl -e ^cpanel- | sort | uniq); do
+                echo "Package: $i";
+                check=`rpm -V $i`;
+		if [ "$check" = "" ]; then
+			echo "$i Is good";
+			echo
+		else
+			echo "$i Is bad";
+			echo "$check";
+			echo "$i"
+			echo -n "(r)einstall / (s)kip / (u)ninstall / (p)relink: ";
+			read wait
+			if [ "$wait" = "r" ]; then
+				if [ "$reinstall" = "1" ]; then
+					echo "Running yum reinstall $i"
+					yum -y reinstall $i
+				else
+					# the fuck was I thinking?
+					#echo "Running rpm -e --allmatches --justdb $i";
+					#rpm -e --justdb $i --allmatches --nodeps
+					#echo "Running yum -C -y install $i";
+					yum reinstall $i
+				fi
+			elif [ "$wait" = "p" ]; then
+				echo -n "running prelink.." 
+				/etc/cron.daily/prelink
+				echo ".done."
+			elif [ "$wait" = "u" ]; then
+				yum remove $i
+			fi
+		fi
+        done
+	echo 'Running yum update';
+	yum update
+else
+
+	for i in $(rpm -qa --queryformat "%{NAME}\n"); do
+        	echo "Package: $i";
+        	rpm -V $i
+	done
+fi

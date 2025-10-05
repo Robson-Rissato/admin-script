@@ -1,0 +1,328 @@
+#!/bin/sh
+
+#
+# this scripts has been designed for InterServer managed servers
+# egrep '^flags.*(vmx|svm)' /proc/cpuinfo
+
+echo "Usage ./installkvm7 yes";
+echo "Must run with yes. New value: add LVM after yes: installkvm7 yes sda5 - otherwise we default to sda4";
+
+sleep 2s;
+
+# removed fuse-ntfs-3g-2010.10.2-1
+
+if [ ! -e /etc/redhat-release ]; then
+        echo 'Requires RHEL/CentOS';
+        exit;
+fi
+
+if [ ! "$1" = "yes" ]; then
+        echo 'Must run with yes';
+        exit;
+fi
+
+if [ -e /usr/local/directadmin -o -e /usr/local/cpanel ]; then
+	echo 'We should not have a control panel';
+	exit;
+fi
+
+if [ -e /etc/dhcpd.vps ]; then
+	echo 'Installer already ran';
+	exit;
+fi
+
+# all works fine with selinux
+#setenforce 0
+#/admin/replace-linux SELINUX=enforcing SELINUX=disabled -- /etc/selinux/config
+
+/admin/sshkeyme
+/admin/resolvconf
+/sbin/chkconfig cgconfig on
+
+mkdir -p /root/cpaneldirect /tools/bandwidth /scripts
+
+if [ ! "$2" = "" ]; then
+	LVM=/dev/$2
+else
+	LVM=/dev/sda4
+fi
+
+if [ ! -e  $LVM ]; then
+	echo "$LVM device does not exist";
+	exit;
+fi
+
+
+rpm -Uvh https://dl.fedoraproject.org/pub/epel/7/x86_64/Packages/e/epel-release-7-11.noarch.rpm
+rpm -Uvh http://patches.kernelcare.com/kernelcare-latest.x86_64.rpm
+rpm -Uvh http://mirror.trouble-free.net/3ware/MegaCli-8.07.14-1.noarch.rpm
+ln -s /opt/MegaRAID/MegaCli/MegaCli64 /usr/bin/megacli
+ln -s /opt/MegaRAID/MegaCli/MegaCli64 /usr/bin/MegaCli
+
+
+
+# install software
+yum clean all
+yum -y update
+
+yum -y remove biosdevname
+systemctl stop firewalld
+systemctl mask firewalld
+yum -y install iptables-services ebtables php php-bcmath ImageMagick subversion pciutils php nano screen
+systemctl enable iptables
+systemctl stop iptables
+yum -y install psmisc ebtables rdate
+
+touch /etc/dhcpd.vps
+
+# enable KVM module
+modprobe kvm-intel
+
+/admin/replace-linux "\#UseDNS yes" "UseDNS no" -- /etc/ssh/sshd_config
+
+yum -y install postfix wget screen telnet lsof whois bc make file nano smartmontools lvm2
+yum -y install libguestfs-devel libguestfs-winsupport libguestfs libguestfs-tools python-libguestfs
+yum -y remove cpuspeed
+yum -y install pv dhcp net-tools ms-sys ntfsprogs ntfsprogs-devel chntpw libguestfs libguestfs-tools hivex expect e2fsprogs e2fsprogs-devel e2fsprogs-libs
+yum -y install qemu-kvm qemu-kvm-tools python-virtinst libvirt dhcp curl ImageMagick subversion php-mysql php-cli php-pear mdadm cronie-noanacron
+yum -y install xz yum-utils unzip subversion shadow-utils ruby redhat-menus ioping iotop gcc autoconf automake gstreamer lynx wget whois tcpdump
+
+# mk directories
+mkdir -p /scripts
+mkdir -p /root/tmp
+
+# cron
+cat > /root/tmp/crontab <<EOF
+*/1 * * * * cd /root/cpaneldirect && ./vps_cron.sh
+*/1 * * * * /scripts/securexinetd >/dev/null 2>&1
+17 5 * * * /usr/bin/yum -y update >/dev/null 2>&1
+# removed because it changes all vm's to east coast
+#29 0 * * * /usr/bin/rdate -s rdate.interserver.net >/dev/null 2>&1
+EOF
+
+crontab /root/tmp/crontab
+/bin/rm /root/tmp/crontab
+
+cat > /etc/cron.hourly/vps.cron <<EOF
+
+#!/bin/sh
+
+/scripts/buildebtablesrules | /bin/sh
+EOF
+chmod +x /etc/cron.hourly/vps.cron
+
+#rc.local startup config
+cat >> /etc/rc.d/rc.local <<EOF
+modprobe kvm-intel
+modprobe ipt_MASQUERADE
+if [ -e /proc/sys/dev/raid ]; then
+        echo 100000 > /proc/sys/dev/raid/speed_limit_min
+        echo 200000 > /proc/sys/dev/raid/speed_limit_max
+fi
+cpupower frequency-set --governor performance
+
+if [ -e /usr/bin/megacli ]; then
+        if [ -e /root/cpaneldirect/check_raid.sh ]; then
+                if [ ! "$(/root/cpaneldirect/check_raid.sh | egrep -i 'WARNING|CRITICAL')" = "" ]; then
+                        echo 'Using write through';
+                        megacli -LDSetProp WT -LALL -aALL
+                else
+                    	echo 'Using write back';
+                        megacli -LDSetProp ADRA -LALL -aALL
+                        megacli -LDSetProp WB -LALL -aALL
+                        megacli -LDSetProp EnDskCache -LAll -aAll
+                fi
+
+                megacli -LDSetProp NoCachedBadBBU -LALL -aALL
+        fi
+fi
+
+EOF
+
+
+#additional software (doublecheck)
+
+yum -y install ms-sys ntfsprogs ntfsprogs-devel chntpw
+
+# sysctl
+cat > /etc/sysctl.conf <<EOF
+# Kernel sysctl configuration file for Red Hat Linux
+#
+# For binary values, 0 is disabled, 1 is enabled.  See sysctl(8) and
+# sysctl.conf(5) for more details.
+
+# Controls IP packet forwarding
+net.ipv4.ip_forward = 0
+
+# Controls source route verification
+net.ipv4.conf.default.rp_filter = 1
+
+# Do not accept source routing
+net.ipv4.conf.default.accept_source_route = 0
+
+# Controls the System Request debugging functionality of the kernel
+kernel.sysrq = 0
+
+# Controls whether core dumps will append the PID to the core filename
+# Useful for debugging multi-threaded applications
+kernel.core_uses_pid = 1
+
+# Controls the use of TCP syncookies
+net.ipv4.tcp_syncookies = 1
+
+# Controls the maximum size of a message, in bytes
+kernel.msgmnb = 65536
+
+# Controls the default maxmimum size of a mesage queue
+kernel.msgmax = 65536
+
+# Controls the maximum shared segment size, in bytes
+kernel.shmmax = 68719476736
+
+# Controls the maximum number of shared memory segments, in pages
+kernel.shmall = 4294967296
+
+net.bridge.bridge-nf-call-ip6tables = 0
+net.bridge.bridge-nf-call-iptables = 0
+net.bridge.bridge-nf-call-arptables = 0
+net.ipv4.ip_forward = 1
+EOF
+
+
+#dhcp
+cat > /etc/dhcp/dhcpd.conf <<EOF
+authoritative;
+option domain-name "interserver.net";
+option domain-name-servers 64.20.34.50;
+allow bootp;
+allow booting;
+ddns-update-style interim;
+default-lease-time 600;
+max-lease-time 7200;
+log-facility local7;
+
+shared-network myvpn {
+
+subnet 68.168.213.96 netmask 255.255.255.224 {
+        next-server 68.168.213.97;
+        option domain-name-servers 8.8.8.8;
+        option domain-name "interserver.net";
+        option routers 68.168.213.98;
+        option broadcast-address 68.168.213.127;
+        default-lease-time                      86400;   # 24 hours
+        max-lease-time                          172800;  # 48 hours
+}
+
+subnet 104.218.48.64 netmask 255.255.255.224 {
+        next-server 104.218.48.65;
+        option domain-name-servers 64.20.34.50;
+        option domain-name "interserver.net";
+        option routers 104.218.48.65;
+        option broadcast-address 104.218.48.95;
+        default-lease-time                      86400;   # 24 hours
+        max-lease-time                          172800;  # 48 hours
+}
+
+
+}
+
+group {
+        include "/etc/dhcpd.vps";
+}
+
+EOF
+
+ln -s /etc/dhcp/dhcpd.conf /etc/dhcpd.conf
+
+# taken from openvz install
+echo "sshd: ALL" >> /etc/hosts.deny
+echo "sshd: 66.45.228.251" >> /etc/hosts.allow
+echo "sshd: 66.45.228.100" >> /etc/hosts.allow
+echo "sshd: 66.45.228.200" >> /etc/hosts.allow
+echo "AllowUsers root@66.45.228.251 root@66.45.228.100 root@66.45.228.200" >> /etc/ssh/sshd_config
+/admin/replace-linux "\#PermitRootLogin yes" "PermitRootLogin without-password" -- /etc/ssh/sshd_config
+
+mkdir -p /root/.ssh
+chmod 700 /root/.ssh
+
+echo "from=\"66.45.228.100 66.45.228.200\",command="/root/cpaneldirect/update_program.sh" ssh-rsa AAAAB3NzaC1yc2EAAAABIwAAAIEA+GLu9k5I4w0Qc6L3AXHUEygAup/N6j35CMuSgiOAvyavr1Al9mZYV/wVWxDFXAYVojS1RTnkB2AuB8wi+QLpeOuJFiwSeH+UtEPi1S3XufoNggiDVBxi9OjvQeM51BZNowQqRjip0josBmgxGqvKWY5FDtehuw30gqehp1E6eB8= root@nucleus.interserver.net" >> /root/.ssh/authorized_keys2
+
+#/admin/replace-linux root hardware@interserver.net -- /etc/mdadm.conf
+
+#/admin/buildsmartconf
+
+# last stuff
+yum -y install xinetd
+cd /etc/cron.daily
+ln -s /admin/vzconfbackup
+
+# create LVM
+pvcreate $LVM
+vgcreate vz $LVM
+vgscan
+
+
+#lvm recently added
+lvscan
+vgchange -ay
+lvcreate vz -L100 -ntest
+
+
+
+echo
+echo "Must Configure dhcp manually";
+echo
+
+
+echo -e "#!/bin/sh\n\nrsync -av rsync://vpsadmin.interserver.net/vps/cpaneldirect/ /root/cpaneldirect/\n" > /root/cpaneldirect/upscripts
+chmod +x /root/cpaneldirect/upscripts
+
+echo -e "#!/bin/sh\n\nrsync -av rsync://vpsadmin.interserver.net/vps/kvm/ /scripts/\n" > /scripts/upscripts
+chmod +x /scripts/upscripts
+
+
+if [ -e /etc/dhcp/dhcpd.conf ]; then
+	/bin/rm /etc/dhcp/dhcpd.conf
+	cd /etc/dhcp
+	ln -s /etc/dhcpd.conf
+fi
+
+#
+/admin/definekvmtemplates
+/admin/kvmtemplatecron
+chmod 666 /dev/kvm
+
+yum -y install libguesetfs libguestfs-tools hivex
+yum -y install subversion
+yum -y install ruby rubygems
+gem install lvmsync
+
+systemctl enable libvirt-guests.service
+systemctl enable dhcpd.service
+chmod +x /etc/rc.d/rc.local
+
+
+#yum install -y libserf libserf-devel doxygen gcc-c++  yum-utils yum-tools rpm-build \
+#  swig python-devel perl-ExtUtils-Embed apr-util-devel httpd-devel expat-devel \
+#  docbook-style-xsl dbus-devel qt4-devel java-1.7.0-openjdk java-1.7.0-openjdk-devel; \
+#wget http://mirror.trouble-free.net/detain_packages/subversion-1.8.10-1.src.rpm; \
+#rpmbuild --rebuild subversion-1.8.10-1.src.rpm  --nodeps; \
+#rpm -e subversion-libs subversion; \
+#cd /root/rpmbuild/RPMS || cd /usr/src/redhat/RPMS; cd x86_64 || cd x86; \
+#rpm --upgrade subversion{-tools,-python,-perl,-devel,-javahl,}-1.8.10-1.*.rpm;
+
+# notes for first boot, since it is run from kickstart
+echo
+echo 'You need to touch /win or touch /lin to set the os type' >> /etc/motd
+echo 'Must Configure dhcp manually' >> /etc/motd
+echo 'Must run /scripts/upscripts && /root/cpaneldirect/upscripts && /admin/kvmtemplatecron && /root/cpaneldirect/swift.sh' >> /etc/motd
+echo 'MegaCLI smartd' >> /etc/motd
+
+systemctl restart libvirtd.service
+
+virsh net-destroy default
+virsh net-undefine default
+
+
+cat /etc/motd
+

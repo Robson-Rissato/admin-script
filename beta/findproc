@@ -1,0 +1,31 @@
+#!/bin/bash
+
+if [ ! -d /usr/local/cpanel ]; then
+	printf 'tested for cpanel only \n';
+	exit;
+fi
+
+if [ ! -f /etc/redhat-release ]; then
+	printf 'requires redhat/centos \n';
+	exit;	
+fi
+
+IFS="
+"
+
+for data in $(ps axo user:20,pid,args:50 | grep -v [r]oot | egrep -v "wget|\[exim\]|sshd:|/usr/libexec/openssh/sftp-server|pkgacct|dovecot/|/usr/local/cpanel/bin/logrunner|/usr/sbin/exim|webmaild|/usr/local/cpanel/3rdparty/bin/webalizer_lang|php-fpm: pool cpanelroundcube|^litespeed|lsphp|/usr/local/cpanel/3rdparty/mailman/b|cpaneld - ser|cpanellogd - http|pure-ftpd \(IDLE\)|/usr/sbin/named|/usr/local/cpanel/cpanel|/usr/local/cpanel/3rdparty/sbin/p0f|/usr/lib/polkit-1/polkitd|spamd child|/usr/sbin/proxyexec|/usr/sbin/sendmail|/bin/pyzor|/usr/sbin/mysqld|/bin/dbus-daemon|/usr/bin/mysqld_safe|/usr/sbin/nscd|^sshd|^cpanel|/usr/local/cpanel/3rdparty/bin/perl|^dbus|litespeed \(lshttpd\)|^68|^USER|/home/cpanelsolr|/usr/sbin/httpd|/usr/sbin/nsd|^haldaemon" | awk '{print $1 ":" $2 ":" substr($0,index($0,$3))}');do
+	printf "Returned $data \n";
+	user=$(echo $data | cut -d: -f1);
+	pid=$(echo $data | cut -d: -f2);
+	echo
+	lsof -p $pid
+
+	printf 'Kill it? ';
+	read wait;
+	if [ "$wait" = "y" ]; then
+		kill -9 $pid
+		echo
+	else
+		echo 'skip';
+	fi
+done

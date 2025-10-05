@@ -1,0 +1,21 @@
+Create disclaimers files in plaintext and in html
+
+/usr/local/etc/exim/textdisclaimer
+and 
+/usr/local/etc/exim/htmldisclaimer
+
+
+add (router middle)
+
+disclaimer:
+ driver = dnslookup
+ domains = ! +local_domains
+ transport = disclaimer_smtp
+
+and (transport middle)
+
+disclaimer_smtp:
+ driver = smtp
+ transport_filter = /usr/local/bin/altermime  --input=- --disclaimer=/usr/local/etc/exim/textdisclaimer --disclaimer-html=/usr/local/etc/exim/htmldisclaimer
+ size_addition = 1
+

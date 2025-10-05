@@ -1,0 +1,304 @@
+#!/usr/bin/env bash
+
+# Last modified 01/29/2025
+# this is system status probe we call on cpanel systems
+# it runs through a lists of common checks and problems like
+# do we not have suexec in apache, is cloudlinux installed with out kmodlve loaded
+# basically if we find a common issue we want to add it in here and check for it
+
+if [ -f /admin/includes/common_bash_functions ]; then
+        source /admin/includes/common_bash_functions
+fi
+
+# cpanel ssp
+
+# check cpanel exists
+if [ ! -d /usr/local/cpanel ]; then
+	echo 'Missing /usr/local/cpanel';
+	exit;
+fi
+
+#webhosting2016 was running a debug kernel had to remove at some point
+kernelcheck=`uname -r | grep debug`;
+if [ ! "$kernelcheck" = "" ]; then
+	echo "* ${cyan}WARNING${normal} running unsupported debug kernel";
+	dosleep;
+fi
+
+# with out this user nobody may be permissions for writes
+# but skip for litespeed
+if [ ! -d /usr/local/lsws ]; then
+	if [ ! -e /usr/lib64/apache2/modules/mod_suexec.so ]; then
+        	echo " * ${cyan}WARNING${normal} missing ea-apache24-mod_suexec which may lead to permission problems on sites";
+		dosleep;
+	fi
+fi
+
+# lacking kmodlve on cloudlinux causes odd issues
+if [ -e /usr/sbin/cagefsctl ]; then
+	lvecheck=`lsmod | grep kmodlve | awk '{print $1}' | grep -v ^vzdev`;
+	if [ ! "$lvecheck" = "kmodlve" ]; then
+		echo " * ${cyan}WARNING${normal} cagefsctl detected with out kmodlve loaded. If this is a cloudlinux server and kmodlve is not loaded php may show 503 errors";
+		dosleep;
+	fi
+	if [ -x /usr/bin/cldiag ]; then
+		mphpcheck=$(/usr/bin/cldiag --check-multi-php);
+		did_we_complete=$(echo $?);
+		if [ ! "$did_we_complete" = "0" ]; then
+			printf "$mphpcheck";
+			echo
+		fi
+
+		cagefsccheck=$(/usr/bin/cldiag --check-cagefs);
+		did_we_complete=$(echo $?);
+		if [ ! "$did_we_complete" = "0" ]; then
+                        printf "$cagefsccheck";
+                        echo
+                fi
+
+
+	fi
+	# common migration issues
+	if [ ! -f /etc/cl.selector/symlinks.rules ]; then
+		echo "	* ${cyan} NOTE ${normal} missing  /etc/cl.selector/symlinks.rules  which may cause mysqli errors if alt-php is used in multi php";
+		echo 'Please see https://wiki.interserver.net/index.php/Alt-php_modules_fix_like_pdo';
+		dosleep;
+	fi
+fi
+# end cl check
+if [ -e /usr/sbin/imunify360-php-daemon ]; then
+	if [ -e /usr/sbin/proftpd ]; then
+		echo " * ${cyan} NOTE ${normal} proftpd is installed. Normally pureftpd is used which has support for imunify ";
+		dosleep;
+	fi
+fi
+
+# ixhash for better spam - might not work on spamassassin 4+
+if [ ! -e /etc/mail/spamassassin/iXhash.pm ]; then
+	echo " * ${cyan}WARNING ${normal} missing /etc/mail/spamassassin/iXhash.pm";
+	echo "To fix run: ${green}/admin/configs/cpanel/install_ix${normal}";
+	dosleep;
+fi
+
+if [ ! -f /root/.my.cnf ]; then
+	echo " * ${cyan}NOTE ${normal} missing /root/.my.cnf";
+else
+        remotehosts=`mysqladmin processlist | awk '{print $6}' | grep : | grep -v localhost | cut -d: -f1 | sort | uniq`;
+        if [ ! "$remotehosts" = "" ]; then
+                echo
+                echo 'Remote connections to mysql';
+                echo "${remotehosts}";
+		dosleep;
+        fi
+
+fi
+
+if [ -f /etc/systemd/system/mariadb.service.d/migrated-from-my.cnf-settings.conf  ]; then
+	echo "	* NOTE /etc/systemd/system/mariadb.service.d/migrated-from-my.cnf-settings.conf  exists";
+	echo 'See https://wiki.interserver.net/index.php/Mysql_openfiles if mysql openfiles are being hit';
+	cat /etc/systemd/system/mariadb.service.d/migrated-from-my.cnf-settings.conf
+	echo
+	echo ' To Fix';
+	echo "mv /etc/systemd/system/mariadb.service.d/migrated-from-my.cnf-settings.conf /etc/systemd/system/mariadb.service.d/my.cnf-settings.conf";
+	echo ' Change open files to LimitNOFILE=1048570';
+	echo 'systemctl daemon-reload; systemctl restart mysqld';
+	echo ' retest with';
+	echo 'cat /proc/$(pidof mysqld)/limits |grep files';
+	echo
+	if [ -f /admin/tests/mysqltuner.pl ]; then
+		echo 'More info on mysql can be found running /admin/tests/mysqltuner.pl';
+	fi
+	echo
+	dosleep;
+fi
+
+# mail flood check
+if [ -f /var/log/exim_mainlog ]; then
+	echo 'Checking for too many connections in exim...';
+	tail -n 100000 /var/log/exim_mainlog | grep "refused\: too many connections" | tail -n 10
+	echo
+
+	echo 'Checking for accounts hitting max emails per hour max emails per hour';
+	tail -n 5000 /var/log/exim_mainlog | grep -i "enforce_mail_permissions" | tail -n 1
+	tail -n 5000 /var/log/exim_mainlog | grep -i "enforce_mail_permissions" | tail -n 10 | awk '{print $6}' | cut -d\( -f2 | cut -d\) -f1
+	dosleep;
+fi
+
+
+# this could cause high disk io on large accounts
+if [ -d /usr/local/jetapps ]; then
+	jbrestore=`ps auxw | grep "[j]etbackup --run restore"`;
+	if [ ! "$jbrestore" = "" ]; then
+		echo " * NOTE jetbackup restore running";
+		ps auxw | grep jetbackup
+		echo 'Debugging a slow system? These may be relevant.';
+		dosleep;
+	fi
+fi
+
+# this came up in a webmail error
+if [ -f /usr/local/cpanel/logs/php-fpm/error.log ]; then
+	maxcpanelfpm=`tail -n 100 /usr/local/cpanel/logs/php-fpm/error.log | grep "reached max_children"`;
+	if [ ! "$maxcpanelfpm" = "" ]; then
+		echo " * NOTE /usr/local/cpanel/logs/php-fpm/error.log shows max children reached in the past which could make webmail logins just spin";
+		echo 'Review https://support.cpanel.net/hc/en-us/articles/360049982694-Webmail-Login-just-spinning';
+		dosleep;
+	fi
+fi
+
+#max children
+for phpver in `ls /opt/cpanel/ | grep ea-php`; do
+	if [ -f /opt/cpanel/${phpver}/root/usr/var/log/php-fpm/error.log ]; then
+		grep max_children /opt/cpanel/${phpver}/root/usr/var/log/php-fpm/error.log | tail -n 2 && echo "max children in php fpm hit for $phpver";
+	fi
+done
+echo
+
+# this could cause high disk io on large accounts
+pkgacct=`ps auxw | grep [p]kgacct`;
+if [ ! "$pkgacct" = "" ]; then
+	echo " * NOTE pkgacct processes are running";
+	printf "${pkgacct}";
+	echo 'Debugging a slow system? These may be relevant.';
+	dosleep;
+fi
+
+# came up on one server
+if [ ! -e /usr/sbin/rsyslogd ]; then
+        echo " * NOTE missing rsyslog";
+	echo 'If /var/log/maillog or similar is empty this is the cause';
+	dosleep;
+fi
+
+if [ -f /var/log/maillog ]; then
+	mmapdovecotcheck=`tail -n 50000 /var/log/maillog | grep "mmap(size" | tail -n 10`;
+	if [ !  "$mmapdovecotcheck" = "" ]; then
+		echo "	* NOTE found out of memory mmap dovecot errors which comes from large mailboxes";
+		echo "${mmapdovecotcheck}";
+		echo
+		echo 'To fix in WHM -> mail server configuration and raise Process Memory Limit: config (MB)';
+		dosleep;
+	fi
+
+	if [ -e /usr/sbin/imunify360-pam ]; then
+		multipasscheck=`tail -n 10000 /var/log/maillog | grep "Multiple password values not supported" | head -n 1`;
+		if [ ! "$multipasscheck" = "" ]; then
+			echo " 	* NOTE imunify pam brute force error https://support.cpanel.net/hc/en-us/articles/1500006551182-Unable-to-log-into-email-account-Multiple-password-values-not-supported";
+			echo " To fix run";
+			echo "imunify360-pam set-dovecot disabled; imunify360-agent config update '{\"PAM\": {\"exim_dovecot_protection\": false}}'";
+			dosleep;
+		fi
+	fi
+
+fi
+
+# normally we want op cache
+opcache=`php -v | grep -i opcache`;
+if [ "$opcache" = "" ]; then
+	php -v
+	echo " * NOTE missing op cache in php. To fix run yum install ea-phpVERSION-php-opcache note again VERSION would change to the php version shown in php -v";
+	dosleep;
+fi
+
+for pdover in 81 82; do
+	if [ ! -e /opt/cpanel/ea-php${pdover}/root/usr/lib64/php/modules/pdo_mysql.so ]; then
+		echo "	* NOTE Missing ea-php${pdover} mysqlnd to fix run: yum -y install ea-php${pdover}-php-pdo ea-php${pdover}-php-mysqlnd";
+		dosleep;
+	fi
+done
+
+if [ -f /etc/apache2/conf.d/qos.conf ]; then
+	echo " * NOTE mod_qos is installed";
+	echo 'Getting random timeouts? This may be the cause. yum remove ea-apache24-mod-qos';
+	echo
+fi
+
+#legacy toolkit
+if [ -e /usr/local/cpanel/Cpanel/WordPress.pm ]; then
+	echo '* Note legacy toolkit is installed for cpanel to fix';
+	echo 'yum remove cpanel-wordpress-instance-manager-plugin';
+	echo;
+	dosleep;
+fi
+
+# we want to remove cloudflare plugin program is done
+if [ -d /usr/local/cpanel/base/frontend/paper_lantern/cloudflare ]; then
+	echo " * NOTE cloudflare plugin is installed and needs to be removed";
+	dosleep;
+fi
+
+if [ -f /var/cpanel/perl/Cpanel/SSL/Auto/Provider/FleetSSLProvider.pm ]; then
+	echo 'Detected fleet ssl';
+	echo 'If ssl is not working or upcp is failing due to fleet ssl use this fix';
+	echo
+	echo 'unlink /var/cpanel/perl/Cpanel/SSL/Auto/Provider/FleetSSLProvider.pm';
+	if [ -f /etc/chkserv.d/letsencrypt-cpanel ]; then
+		echo 'unlink /etc/chkserv.d/letsencrypt-cpanel && /scripts/restartsrv_chkservd';
+	fi
+	if [ -f /etc/systemd/system/multi-user.target.wants/letsencrypt-cpanel.service ]; then
+		echo 'systemctl disable   letsencrypt-cpanel.service';
+	fi
+	echo 'Notes: https://support.cpanel.net/hc/en-us/articles/9517265303831-FleetSSL-uninstall-breaks-Apache-rebuild-Can-t-locate-Cpanel-SSL-Auto-Provider-FleetSSLProvider-pm-';
+	echo
+fi
+
+#a client said they changed php versions and it got slow
+#they changed to suphp
+# so lets note if suphp is used. Its older, lsphp is faster, and lastly its not even supported any more
+if [ -x /usr/local/cpanel//bin/rebuild_phpconf ]; then
+	# but on litespeed we don't need to check
+	if [ ! -d /usr/local/lsws ]; then
+		suphpcheck=`/usr/local/cpanel//bin/rebuild_phpconf --current | grep suphp$`;
+		if [ ! "$suphpcheck" = "" ]; then
+			echo "	* NOTE: one or more php versions have suphp";
+			echo "	* Debugging slowness? suphp can be replaced to mod_lsphp";
+			echo "${suphpcheck}";
+			dosleep;
+		fi
+	fi
+fi
+if [ -d /var/cpanel/users ]; then
+	dotfilecheck=`ls /var/cpanel/users | egrep "\.|_"`;
+	if [ ! "$dotfilecheck" = "" ]; then
+		echo " 	* NOTE there are files that have periods in them in /var/cpanel/users which are not valid";
+		echo "$dotfilecheck";
+		dosleep;
+	fi
+else
+	echo "	* HMM we are missing /var/cpanel/users on a cpanel server??";
+	dosleep;
+fi
+
+if [ -e /opt/fleetssl-cpanel/letsencrypt.live.cgi ]; then
+	echo '	* NOTE a third party ssl is installed fleet ssl';
+	echo ' This should NOT be installed on webhosting servers';
+	echo 'To remove run yum remove letsencrypt-cpanel';
+	dosleep;
+fi
+
+#grep 'too many clients already' /opt/cpanel-ccs/data/Logs/error.log | tail
+if [ -f /opt/cpanel-ccs/data/Logs/error.log ]; then
+	pgsqlmaxcon=`grep 'too many clients already' /opt/cpanel-ccs/data/Logs/error.log | tail -n 1`;
+	if [ ! "$pgsqlmaxcon" = "" ]; then
+		echo " * ${cyan}WARNING${normal} pgsql for cpanel calendar is hitting max connections THIS WILL CAUSE WEBMAIL LOADING LOGIN ISSUES AS WELL";
+		echo 'Please see the fix at https://support.cpanel.net/hc/en-us/articles/4415100519575-Increase-PostgreSQL-max-connections-for-cPanel-CCS';
+		dosleep;
+	fi
+fi
+
+if [ -f /etc/csf/csf.conf ]; then
+	checkport2091=`grep 2091 /etc/csf/csf.conf`;
+	if [ "$checkport2091" = "" ]; then
+		echo " * ${cyan}NOTE${normal} port 2091 is NOT opened in /etc/csf/csf.conf which will cause calendar issues";
+		dosleep;
+	fi
+fi
+
+# also dns errors mean something else may be going on
+# failure to ping api.wordpress.org will break the wordpress plugin
+if [ -x /usr/bin/ping ]; then
+	echo 'Testing api.wordpress.org';
+	/usr/bin/ping -c 2 -w 5 api.wordpress.org
+	echo 'If ping to api.wordpress.org fails that can break wp toolkit';
+	echo
+fi

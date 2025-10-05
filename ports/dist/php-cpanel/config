@@ -1,0 +1,11 @@
+NAME='php';
+VERSION='4.4.9';
+MD5='9bcc1aba50be0dfeeea551d018375548';
+EXT='tar.gz';
+DEPS='gcc gcc-c++ patch';
+CONFIG='/admin/getphpconfigline > sh && sh sh';
+CONFIG1='make clean && /admin/getphpconfigline --/usr > sh && sh sh';
+MAKE='make';
+MAKEINSTALL='make install';
+FILES='/usr/local/bin/php /usr/bin/php /admin/getphpconfigline /usr/local/apache/bin/apxs /usr/local/cpanel/cpanel';
+PATCH='p1:php-4.4.8-mail-header.patch:ff1bd80a0dd79f02403cb2336987b3d9';

@@ -1,0 +1,22 @@
+#!/bin/sh
+
+calculate_usage() {
+
+DAUSERS=`cat /etc/virtual/domainowners | cut -d ":" -f 2 | sed 's/ //g' | sort -u`
+
+echo "                        Block limits                File limits
+User            used    soft    hard  grace    used  soft  hard  grace
+----------------------------------------------------------------------"
+for u in $DAUSERS; do
+   DIR=`getent passwd $u | cut -d: -f6`
+   if [ -d $DIR ]; then
+       CALC=`df -k --output=used ${DIR} | tail -n 1`
+       IUSED=`df -i ${DIR} | tail -n 1 | awk '{print $3}'`;
+       echo "$u       -- $CALC       0       0              $IUSED     0     0      "
+   fi
+done
+}
+
+calculate_usage
+exit 0;
+

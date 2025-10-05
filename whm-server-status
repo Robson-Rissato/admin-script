@@ -1,0 +1,42 @@
+#!/bin/bash
+
+webuzo=0;
+
+if [ -e /usr/local/cpanel ]; then
+	PORT=`cat /var/cpanel/cpanel.config | grep ^apache_port= | cut -d: -f2`;
+elif [ -e /var/webuzo ]; then
+	webuzo=1;
+	echo 'Found webuzo';
+else
+	echo 'For cpanel or webuzo';
+	exit;
+fi
+
+        if [ -x /usr/bin/lynx -a -x /usr/bin/timeout ]; then
+
+                if [ "$1" = "get" ]; then
+			if [ "$webuzo" = "1" ]; then
+				timeout 30s lynx -dump http://localhost/Webuzo-server-status | grep GET | sort
+			else
+                        	timeout 30s lynx -dump http://localhost:${PORT}/whm-server-status | grep GET | sort
+			fi
+                elif [ "$1" = "post" ]; then
+			if [ "$webuzo" = "1" ]; then
+				timeout 30s lynx -dump http://localhost/Webuzo-server-status | grep POST | sort
+			else
+                        	timeout 30s lynx -dump http://localhost:${PORT}/whm-server-status | grep POST | sort
+			fi
+                elif [ "$1" = "all" ]; then
+			if [ "$webuzo" = "1" ]; then
+				timeout 30s lynx -dump http://localhost/Webuzo-server-status
+			else
+                        	timeout 30s lynx -dump http://localhost:${PORT}/whm-server-status
+			fi
+                else
+                        echo "Usage ./whm-server-status get|post|all";
+                fi
+
+        else
+                echo "lynx needs to be installed";
+        fi
+

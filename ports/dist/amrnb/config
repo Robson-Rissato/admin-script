@@ -1,0 +1,9 @@
+NAME='amrnb';
+VERSION='7.0.0.2';
+MD5='ab3476a0a058c8f2bf026d484fc8a597';
+EXT='tar.bz2';
+DEPS='gcc gcc-c++';
+CONFIG='./configure';
+MAKE='make';
+MAKEINSTALL='make install';
+LDCONFIG=1

@@ -1,0 +1,5 @@
+#certs
+HostCertificate /etc/ssh/ssh_host_ed25519_key-cert.pub
+TrustedUserCAKeys /etc/ssh/tech_cakey.pub
+AuthorizedPrincipalsFile /etc/ssh/root
+#end ssh config

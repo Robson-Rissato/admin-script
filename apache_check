@@ -1,0 +1,107 @@
+#!/bin/sh
+
+# touch /root/tmp/_apachecheckmail to send mail
+
+if [ ! -f /etc/redhat-release ]; then
+        echo 'Requires redhat';
+        exit;
+fi
+
+if [ ! -e /usr/bin/nc ]; then
+        echo 'NC needs to be installed';
+        exit;
+fi
+
+# first is cpanel specific
+if [ -d /usr/local/cpanel ]; then
+
+        if [ ! -d /usr/local/apache/htdocs ]; then
+                echo 'Expecting /usr/local/apache/htdocs';
+                exit;
+        fi
+
+        DIR=/usr/local/apache/htdocs;
+
+        if [ ! -e /usr/local/apache/htdocs/test.html ]; then
+                echo "test" > /usr/local/apache/htdocs/test.html
+        fi
+
+        # check for chkservd suspend
+        if [ -e /var/run/chkservd.suspend ]; then
+                echo 'Chkservd is currently suspended, easyapache may be running';
+                exit;
+        fi
+# expecting centos defaults if there is no cpanel
+else
+        if [ ! -d /var/www/html ]; then
+                echo 'Expecting /var/www/html';
+                exit;
+        fi
+
+        DIR=/var/www/html;
+fi
+
+# create test page
+if [ ! -e ${DIR}/test.html ]; then
+                echo "test" > ${DIR}/test.html
+fi
+
+
+if [ -e /var/run/chkservd.suspend ]; then
+        echo 'Chkservd is currently suspended, easyapache may be running';
+        exit;
+fi
+
+
+
+file='/root/tmp/_apachecheck';
+
+if [ -e $file ]; then
+	if [ "$(( $(date +"%s") - $(stat -c "%Y" $lock_file) ))" -gt "14000" ]; then
+                echo "Lock file is too old"
+		/bin/rm $file
+        else
+                echo "Lock file found, exiting";
+                exit;
+        fi
+fi
+
+if [ -e /root/tmp/_apachecheckmail ]; then
+        email=`/admin/getcontact`;
+        hostname=`hostname`
+        date=`date`
+else
+        email=0;
+fi
+
+if [ -e $file ]; then
+        exit;
+fi
+
+touch $file
+
+
+
+
+
+check=`echo "GET /test.html" | nc -w 30 localhost 80`;
+if [ "$check" = "test" ]; then
+        echo 'Apache is running';
+else
+        echo "Apache is not running";
+        logged=`killall httpd; killall php; sleep 1s; killall -9 httpd; killall -9 php; /admin/fixsemgetapache; /admin/res httpd`;
+        sleep 10s;
+        check2=`echo "GET /test.html" | nc -w 30 localhost 80`;
+        if [ "$check2" = "test" ]; then
+                echo 'Apache restarted and is running';
+        else
+                if [ ! "$email" = "0" ]; then
+                        echo $logged | mail -s "Apache failed on $hostname at $date" $email
+                fi
+        fi
+
+
+fi
+
+/bin/rm $file
+

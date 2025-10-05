@@ -1,0 +1,9 @@
+NAME='xcache';
+VERSION='1.2.2';
+MD5='216dc533f63f738b824319ed1ba2c82f';
+EXT='tar.gz';
+DEPS='gcc gcc-c++ autoconf';
+CONFIG='export PHP_PREFIX="/usr" && /usr/bin/phpize && ./configure --enable-xcache';
+MAKE='make';
+MAKEINSTALL='make install';
+FILES='/usr/bin/php /usr/bin/phpize';

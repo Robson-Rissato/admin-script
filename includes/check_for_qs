@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+
+# dir must exist to even check
+if [ -d /root/cpaneldirect ]; then
+
+	check_qs_cron=`crontab -l | grep qs_cron.sh$ | grep -v ^#`;
+	#exact match for qscron
+	if [ "$check_qs_cron" = "*/1 * * * * cd /root/cpaneldirect && ./qs_cron.sh" ]; then
+		# must exist 
+		if [ -x /usr/bin/virsh ]; then
+			virsh list | grep running$ | awk '{print $2}'
+		fi
+	fi
+fi

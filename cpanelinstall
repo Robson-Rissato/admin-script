@@ -1,0 +1,40 @@
+#!/bin/sh
+
+if [ -d /root/cpaneldirect ]; then
+	exit;
+fi
+
+if [ -e /etc/vz ]; then
+	exit;
+fi
+
+if [ ! -e /etc/redhat-release ]; then
+	echo 'Requires redhat';
+fi
+
+if [ -e /root/installer.lock ]; then
+	/bin/rm /root/installer.lock
+fi
+
+if [ -e /root/latest ]; then
+	/bin/rm /root/latest
+fi
+
+
+if [ ! -d /usr/local/cpanel ]; then
+	if [ -e /proc/user_beancounters ]; then
+		yum -y remove xinetd httpd
+		/sbin/chkconfig saslauthd off
+		/sbin/service saslauthd stop
+	fi
+	/admin/resolvconf
+	cd /root
+	wget http://httpupdate.cpanel.net/latest
+        if [ ! -x "$(command -v screen)" ]; then
+            yum -y install screen > /dev/null 2>&1;
+        fi
+	echo "Sending cpanel install to screen in 2 seconds";
+	sleep 2s
+	chmod +x latest
+        screen -dmS layer1 ./latest
+fi

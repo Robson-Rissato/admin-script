@@ -1,0 +1,9 @@
+NAME='xfsdump';
+VERSION='2.2.42-1';
+MD5='4e113a39b07723bbb140d2e5c5389cfe';
+EXT='tar.gz';
+DEPS='gcc gcc-c++';
+CONFIG='autoconf && ./configure --prefix=/usr/local';
+DIRNAME='xfsdump-2.2.42';
+MAKE='make';
+MAKEINSTALL='make install';

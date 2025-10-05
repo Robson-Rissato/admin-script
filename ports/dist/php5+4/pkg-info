@@ -1,0 +1,14 @@
+Add
+
+AddType application/x-httpd-php5 .php5
+AddType application/x-httpd-php5-source .php5s
+
+
+to your httpd.conf file.
+
+Make sure both
+
+LoadModule php4_module        libexec/libphp4.so
+LoadModule php5_module        libexec/libphp5.so
+
+exist

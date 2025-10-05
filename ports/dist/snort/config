@@ -1,0 +1,8 @@
+NAME='snort';
+VERSION='2.8.0.2';
+MD5='c4aeac8aa198a5e4d4bc67b5b2d9bdcb';
+EXT='tar.gz';
+DEPS='gcc gcc-c++ libpcap-devel pcre-devel';
+CONFIG='./configure --with-mysql';
+MAKE='make';
+MAKEINSTALL='make install';

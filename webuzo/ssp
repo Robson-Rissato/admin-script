@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+
+# 01/9/2025
+# webuzo service status probe
+
+if [ ! -d /usr/local/webuzo ]; then
+	echo 'Missing /usr/local/webuzo';
+	exit;
+fi
+
+if [ -f /admin/includes/common_bash_functions ]; then
+        source /admin/includes/common_bash_functions
+fi
+
+
+echo 'Webuzo ssp running';
+
+# exim checks
+if [ -e /usr/sbin/exim ]; then
+	for myfile in /etc/eximrejects /etc/spamscore /etc/mail_script_suspended /etc/secondarymx /etc/recent_authed_mail_ips; do
+		if [ ! -f ${myfile} ]; then
+			echo "Exim installed but missing ${myfile} fixing...";
+			touch ${myfile} && chgrp exim ${myfile}
+		fi
+	done
+fi
+
+if [ -f /etc/redhat-relase ]; then
+	if [ ! -e /usr/bin/yum-config-manager ]; then
+        	echo 'Missing /usr/bin/yum-config-manager on webuzo';
+                echo 'To fix install yum -y install yum-utils';
+         	sleep 2s;
+        fi
+fi
+
+if [ -f /usr/local/apps/apache2/logs/error_log ]; then
+	maxcheck=`grep MaxRequestWorkers /usr/local/apps/apache2/logs/error_log | tail -n 1`;
+	if [ ! "$maxcheck" = "" ]; then
+		echo " * * ${cyan}WARNING${normal} max clients may been hit in the past for apache check /usr/local/apps/apache2/logs/error_log";
+		printf "${maxcheck}";
+	fi
+	echo;
+fi
+
+echo '* Checking for php max connections';
+for phpver in `ls /usr/local/apps/ | grep ^php`; do
+	if [ -f /usr/local/apps/${phpver}/var/log/php-fpm.log ]; then
+		grep max_children /usr/local/apps/${phpver}/var/log/php-fpm.log | tail -n 1
+	fi
+done
+echo "done php max check";
+echo
+
+if [ -e /var/webuzo-data/php/sessions ]; then
+	echo -n 'Checking for high inode usage in /var/webuzo-data/php/sessions...';
+	find /var/webuzo-data/php/sessions | wc -l
+	echo
+	echo 'A tmpwatch against folders in this directory may need to be manually created';
+	dosleep;
+fi
+
+if [ -e /usr/bin/exim ]; then
+	file /usr/sbin/exim
+	echo "In a past webuzo ticket /usr/sbin/exim was a symbolic link to /usr/local/apps/exim/bin/exim as a fix for exim config errors"
+fi
+
+

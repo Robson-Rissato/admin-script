@@ -1,0 +1,352 @@
+#!/bin/sh
+
+sleep 1s;
+#
+# this scripts has been designed for InterServer managed servers
+# egrep '^flags.*(vmx|svm)' /proc/cpuinfo
+
+
+# removed fuse-ntfs-3g-2010.10.2-1
+
+if [ ! -e /etc/redhat-release ]; then
+        echo 'Requires RHEL/CentOS';
+        exit;
+fi
+
+if [ ! "$1" = "yes" ]; then
+        echo 'Must run with yes';
+        exit;
+fi
+
+if [ -e /usr/local/directadmin -o -e /usr/local/cpanel ]; then
+	echo 'We should not have a control panel';
+	exit;
+fi
+
+if [ -e /etc/dhcpd.vps ]; then
+	echo 'Installer already ran';
+	exit;
+fi
+
+#disable selinux
+setenforce 0
+
+/admin/replace-linux SELINUX=enforcing SELINUX=disabled -- /etc/selinux/config
+
+/admin/sshkeyme
+/admin/resolvconf
+/sbin/chkconfig cgconfig on
+service cgconfig start
+
+mkdir -p /root/cpaneldirect /tools/bandwidth /scripts
+
+# set LVM
+LVM=/dev/md127
+
+if [ ! -e  $LVM ]; then
+	echo "$LVM device does not exist";
+	exit;
+fi
+
+# create LVM
+pvcreate $LVM
+vgcreate vz $LVM
+vgscan
+
+# install software
+yum clean all
+yum -y update
+yum -y install postfix wget screen telnet lsof whois bc make file nano smartmontools
+yum -y install  libguestfs-devel libguestfs-winsupport libguestfs libguestfs-tools python-libguestfs
+
+/bin/rm /etc/sysconfig/iptables
+/etc/init.d/iptables restart
+
+# centos 6
+
+# using cronie-noanacron
+# not cronie
+# cronie-noanacron.x86_64 : Utility for running simple regular jobs in old cron style
+# I don't like change
+if [ -e /usr/share/doc/centos-release-6 ]; then
+	yum -y remove cronie-anacron
+	yum -y install qemu-kvm qemu-kvm-tools python-virtinst libvirt dhcp curl ImageMagick subversion php-mysql php-cli php-pear mdadm cronie-noanacron
+else
+	yum -y install kvm kmod-kvm python-virtinst kvm-qemu-img dhcp curl ImageMagick subversion php-mysql php-cli php-pear mdadm libvirt
+fi
+
+yum -y install e4fsprogs e4fsprogs-devel e4fsprogs-libs
+
+yum -y remove mlocate audit cpuspeed auditd
+touch /etc/dhcpd.vps
+
+# enable KVM module
+modprobe kvm-intel
+
+
+
+/admin/replace-linux \#mdns_adv mdns_adv -- /etc/libvirt/libvirtd.conf
+/admin/replace-linux "\#UseDNS yes" "UseDNS no" -- /etc/ssh/sshd_config
+
+# turn off services
+/sbin/chkconfig portmap off
+/sbin/chkconfig nfslock off
+/sbin/chkconfig nfs off
+/sbin/chkconfig rpcidmapd off 
+/sbin/chkconfig iscsi off
+/sbin/chkconfig iscsid off
+/sbin/chkconfig httpd off
+
+# new in cent6
+/sbin/chkconfig rpcbind off
+/etc/init.d/rpcbind stop
+
+
+# mk directories
+mkdir -p /scripts
+mkdir -p /root/tmp
+
+# cron
+cat > /root/tmp/crontab <<EOF
+*/1 * * * * cd /root/cpaneldirect && ./vps_cron.sh
+*/1 * * * * /scripts/securexinetd >/dev/null 2>&1
+17 5 * * * /usr/bin/yum -y update >/dev/null 2>&1
+# removed because it changes all vm's to east coast
+#29 0 * * * /usr/bin/rdate -s rdate.interserver.net >/dev/null 2>&1
+EOF
+
+crontab /root/tmp/crontab
+/bin/rm /root/tmp/crontab
+
+cat > /etc/cron.hourly/vps.cron <<EOF
+
+#!/bin/sh
+
+/scripts/buildebtablesrules | /bin/sh
+EOF
+chmod +x /etc/cron.hourly/vps.cron
+
+#rc.local startup config
+cat >> /etc/rc.d/rc.local <<EOF
+modprobe kvm-intel
+/bin/rm -f /etc/xinetd.d/*
+modprobe ipt_MASQUERADE
+/scripts/buildebtablesrules | /bin/sh
+/scripts/limitbw
+if [ -e /proc/sys/dev/raid ]; then
+        echo 100000 > /proc/sys/dev/raid/speed_limit_min
+        echo 200000 > /proc/sys/dev/raid/speed_limit_max
+fi
+EOF
+
+
+# define templates
+/sbin/chkconfig dnsmasq off
+/sbin/service dnsmasq off
+
+
+#additional software (doublecheck)
+yum -y install mdadm expect
+/sbin/chkconfig mdmonitor on
+
+#ebtables
+cd /admin/ports
+./install ebtables
+
+#dag repo
+cat > /etc/yum.repos.d/dag.repo <<EOF
+[dag]
+name=Dag RPM Repository for Red Hat Enterprise Linux
+baseurl=http://apt.sw.be/redhat/el\$releasever/en/\$basearch/dag
+gpgcheck=1
+enabled=0
+EOF
+
+if [ -e /usr/share/doc/centos-release-6 ]; then
+#tf
+cat > /etc/yum.repos.d/tf.repo <<EOF
+[tf]
+name=TF
+baseurl=http://mirror.trouble-free.net/tf/\$releasever/
+gpgcheck=1
+gpgkey=http://mirror.trouble-free.net/GPG-TFAC
+enabled=1
+EOF
+fi
+
+cd /root/tmp
+wget http://dag.wieers.com/rpm/packages/RPM-GPG-KEY.dag.txt
+rpm --import RPM-GPG-KEY.dag.txt
+/bin/rm RPM-GPG-KEY.dag.txt
+
+yum --enablerepo=dag -y install ms-sys ntfsprogs ntfsprogs-devel chntpw
+
+
+# sysctl
+cat > /etc/sysctl.conf <<EOF
+# Kernel sysctl configuration file for Red Hat Linux
+#
+# For binary values, 0 is disabled, 1 is enabled.  See sysctl(8) and
+# sysctl.conf(5) for more details.
+
+# Controls IP packet forwarding
+net.ipv4.ip_forward = 0
+
+# Controls source route verification
+net.ipv4.conf.default.rp_filter = 1
+
+# Do not accept source routing
+net.ipv4.conf.default.accept_source_route = 0
+
+# Controls the System Request debugging functionality of the kernel
+kernel.sysrq = 0
+
+# Controls whether core dumps will append the PID to the core filename
+# Useful for debugging multi-threaded applications
+kernel.core_uses_pid = 1
+
+# Controls the use of TCP syncookies
+net.ipv4.tcp_syncookies = 1
+
+# Controls the maximum size of a message, in bytes
+kernel.msgmnb = 65536
+
+# Controls the default maxmimum size of a mesage queue
+kernel.msgmax = 65536
+
+# Controls the maximum shared segment size, in bytes
+kernel.shmmax = 68719476736
+
+# Controls the maximum number of shared memory segments, in pages
+kernel.shmall = 4294967296
+
+net.bridge.bridge-nf-call-ip6tables = 0
+net.bridge.bridge-nf-call-iptables = 0
+net.bridge.bridge-nf-call-arptables = 0
+net.ipv4.ip_forward = 1
+EOF
+
+/sbin/chkconfig dhcpd on
+
+#dhcp
+cat > /etc/dhcpd.conf <<EOF
+authoritative;
+option domain-name "interserver.net";
+option domain-name-servers 64.20.34.50;
+allow bootp;
+allow booting;
+ddns-update-style interim;
+default-lease-time 600;
+max-lease-time 7200;
+log-facility local7;
+ddns-update-style ad-hoc;
+
+subnet 68.168.213.96 netmask 255.255.255.224 {
+        next-server 68.168.213.97;
+        range dynamic-bootp 68.168.213.99 68.168.213.126;
+        option domain-name-servers 64.20.34.50;
+        option domain-name "interserver.net";
+        option routers 68.168.213.98;
+        option broadcast-address 68.168.213.127;
+        default-lease-time                      86400;   # 24 hours
+        max-lease-time                          172800;  # 48 hours
+}
+
+group {
+        include "/etc/dhcpd.vps";
+}
+
+EOF
+
+# taken from openvz install
+echo "sshd: ALL" >> /etc/hosts.deny
+echo "sshd: 66.45.228.251" >> /etc/hosts.allow
+echo "sshd: 66.45.228.100" >> /etc/hosts.allow
+echo "sshd: 66.45.228.200" >> /etc/hosts.allow
+echo "AllowUsers root@66.45.228.251 root@66.45.228.100 root@66.45.228.200" >> /etc/ssh/sshd_config
+/admin/replace-linux "\#PermitRootLogin yes" "PermitRootLogin without-password" -- /etc/ssh/sshd_config
+
+mkdir -p /root/.ssh
+chmod 700 /root/.ssh
+
+echo "from=\"66.45.228.100 66.45.228.200\",command="/root/cpaneldirect/update_program.sh" ssh-rsa AAAAB3NzaC1yc2EAAAABIwAAAIEA+GLu9k5I4w0Qc6L3AXHUEygAup/N6j35CMuSgiOAvyavr1Al9mZYV/wVWxDFXAYVojS1RTnkB2AuB8wi+QLpeOuJFiwSeH+UtEPi1S3XufoNggiDVBxi9OjvQeM51BZNowQqRjip0josBmgxGqvKWY5FDtehuw30gqehp1E6eB8= root@nucleus.interserver.net" >> /root/.ssh/authorized_keys2
+
+/admin/replace-linux root hardware@interserver.net -- /etc/mdadm.conf
+
+/admin/buildsmartconf
+
+# last stuff
+yum -y install xinetd
+cd /etc/cron.daily
+ln -s /admin/vzconfbackup
+
+#lvm recently added
+lvscan
+vgchange -ay
+lvcreate vz -L100 -ntest
+#lvcreate vz -L12300 -nwindows2
+#lvcreate vz -L12300 -nwindowsr2
+
+# don't rebuild sw raid weekly
+#cent5
+if [ -e /etc/cron.weekly/99-raid-check ]; then
+        mv /etc/cron.weekly/99-raid-check /etc/cron.monthly/
+fi
+#cent6
+if [ -e /etc/cron.d/raid-check ]; then 
+        /admin/replace-linux "0 1 * * Sun" "0 0 1 * *" -- /etc/cron.d/raid-check
+fi
+
+
+echo
+echo "Must Configure dhcp manually";
+echo
+
+
+echo -e "#!/bin/sh\n\nrsync -av rsync://vpsadmin.interserver.net/vps/cpaneldirect/ /root/cpaneldirect/\n" > /root/cpaneldirect/upscripts
+chmod +x /root/cpaneldirect/upscripts
+
+echo -e "#!/bin/sh\n\nrsync -av rsync://vpsadmin.interserver.net/vps/kvm/ /scripts/\n" > /scripts/upscripts
+chmod +x /scripts/upscripts
+
+/admin/sshkeyme
+/admin/resolvconf
+
+if [ -e /etc/dhcp/dhcpd.conf ]; then
+	/bin/rm /etc/dhcp/dhcpd.conf
+	cd /etc/dhcp
+	ln -s /etc/dhcpd.conf
+fi
+
+#
+/admin/replace-linux SELINUX=enforcing SELINUX=disabled -- /etc/selinux/config
+
+/sbin/chkconfig libvirtd on
+/etc/init.d/libvirtd start
+virsh net-destroy default
+virsh net-undefine default
+/admin/definekvmtemplates
+/admin/kvmtemplatecron
+service rpcidmapd stop
+/sbin/chkconfig rpcidmapd off
+service nfslock stop
+/sbin/chkconfig nfslock off
+
+killall anacron acpid
+
+/etc/init.d/crond restart
+/etc/init.d/xinetd restart
+/sbin/chkconfig xinetd on
+chmod 666 /dev/kvm
+
+yum -y install libguesetfs libguestfs-tools hivex
+
+/admin/installkernelcare
+
+# notes for first boot, since it is run from kickstart
+echo 'You need to touch /win or touch /lin to set the os type' >> /etc/motd
+echo 'Must Configure dhcp manually' >> /etc/motd
+echo 'Must run /scripts/upscripts && /root/cpaneldirect/upscripts && /admin/kvmtemplatecron && /root/cpaneldirect/swift.sh' >> /etc/motd
+
+cat /etc/motd
+

@@ -1,0 +1,6 @@
+This is extremely beta, and under going testing
+
+works with litespeed or suphp only
+
+needs: ln -s /admin/virusscanner.sh clamscanrun.sh
+cron: /admin/clamscan shelldb updatedb

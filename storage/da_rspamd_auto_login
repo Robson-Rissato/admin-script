@@ -1,0 +1,101 @@
+#!/usr/bin/env bash
+
+if [ ! -d /usr/local/directadmin/custombuild ]; then
+	echo 'Requires /usr/local/directadmin/custombuild';
+	exit;
+fi
+
+if [ -d /etc/rspamd/local.d ]; then
+	echo '/etc/rspamd/local.d exists already run with force to continue';
+	if [ ! "$1" = "force" ]; then
+		exit;
+	else
+		echo 'Skipping on force';
+	fi
+fi
+
+cd /usr/local/directadmin/custombuild
+./build update
+./build cpanel_to_da
+
+/usr/local/directadmin/directadmin set hide_brute_force_notifications 1
+/usr/local/directadmin/directadmin set pop_disk_usage_cache 1
+
+/usr/local/directadmin/directadmin set one_click_pma_login 1
+./build phpmyadmin
+
+/usr/local/directadmin/directadmin set one_click_webmail_login 1 restart
+
+if [ -f /usr/local/directadmin/conf/directadmin.conf ]; then
+ check=`grep mail_sni /usr/local/directadmin/conf/directadmin.conf`;
+ if [ "$check" = "" ]; then
+   echo mail_sni=1 >> /usr/local/directadmin/conf/directadmin.conf
+   echo 'added in mailsni to directadmin';
+ fi
+fi
+
+./build roundcube
+
+/usr/local/directadmin/directadmin set letsencrypt 1 restart
+
+/usr/local/directadmin/scripts/letsencrypt.sh request_single `hostname`
+
+if [ -f /etc/redhat-release ]; then
+ yum -y install redis
+else
+ apt -y install redis
+fi
+
+systemctl enable redis
+
+cat > /etc/redis.conf <<EOF
+bind 127.0.0.1
+port 0
+unixsocket /var/lib/redis/rspamd/rspamd.sock
+unixsocketperm 770
+pidfile /var/run/redis/rspamd.pid
+logfile /var/log/redis/rspamd.log
+dir /var/lib/redis/rspamd/
+EOF
+
+mkdir -p /var/lib/redis/rspamd/
+chown redis:redis /var/lib/redis/rspamd/
+systemctl start redis
+
+cd /usr/local/directadmin/custombuild
+./build update
+./build set eximconf yes
+./build set eximconf_release 4.5
+./build set blockcracking yes
+./build set easy_spam_fighter yes
+./build set spamd rspamd
+./build set exim yes
+./build exim
+./build set dovecot_conf yes
+./build dovecot_conf
+./build rspamd
+./build update
+./build exim_conf
+
+if [ -d  /etc/rspamd/local.d ]; then
+
+cat > /etc/rspamd/local.d/redis.conf <<EOF
+servers = "/var/lib/redis/rspamd/rspamd.sock";
+EOF
+
+        cd /etc/rspamd/local.d
+        for i in fuzzy_check.conf fuzzy_group.conf multimap.conf rbl.conf rbl_group.conf; do
+                wget https://raw.githubusercontent.com/mailbaby/rspamd-rules/main/local.d/$i
+        done
+        usermod -a -G _rspamd redis
+        usermod -a -G redis _rspamd
+        rspamadm configtest && systemctl restart rspamd
+else
+
+        echo 'Did not find /etc/rspamd/local.d';
+fi
+
+
+if [ -x /admin/updateda ]; then
+	/admin/updateda all
+fi

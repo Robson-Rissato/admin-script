@@ -1,0 +1,10 @@
+#caf797223739516882f870342f74b935  eaccelerator-0.9.5.3.tar.bz2
+NAME='eaccelerator';
+VERSION='0.9.5.3';
+MD5='caf797223739516882f870342f74b935';
+EXT='tar.bz2';
+DEPS='gcc gcc-c++ autoconf';
+CONFIG='/bin/rm -rf autom4te.cache && export PHP_PREFIX="/usr" && /usr/bin/phpize && ./configure --enable-eaccelerator=shared --with-php-config=/usr/bin/php-config';
+MAKE='make';
+MAKEINSTALL='make install';
+FILES='/usr/bin/php /usr/bin/phpize';

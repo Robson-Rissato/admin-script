@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+
+if [ ! -d /var/service ]; then
+	echo 'No /var/service found';
+	exit;
+fi
+
+if [ "$1" = "" ]; then
+	echo 'Usage ./findid emailid';
+	exit;
+fi
+
+if [ ! "$2" = "" ]; then
+	echo 'Too much data sent';
+	exit;
+fi
+
+if [ -f /var/log/relay.log ]; then
+	clear
+	echo "grep -A 15 $1 /var/log/relay.log"
+	grep -A 15 $1 /var/log/relay.log
+	echo 'Searching all';
+	for i in relay.log.0.zst relay.log.1.zst relay.log.2.zst relay.log.3.zst relay.log.4.zst relay.log.5.zst relay.log.6.zst; do
+		if [ -f /var/log/$i ]; then
+			echo "zstdgrep -A 15 $1 $i";
+			zstdgrep -A 15 $1 /var/log/$i
+			echo
+		fi
+	done
+elif [ -f /var/log/rspamd/rspamd.log ]; then
+	if [ -f /var/log/zonemta.log ]; then
+		clear
+		grep $1 /var/log/rspamd/rspamd.log; grep $1 /var/log/zonemta.log
+		echo 'Searching all';
+		zgrep $1 /var/log/rspamd/rspamd.log.*; grep $1 /var/service/zone-mta/*
+	else
+		echo 'Missing /var/log/zonemta.log';
+	fi
+else
+	echo 'Missing /var/log/rspamd/rspamd.log';
+fi

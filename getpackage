@@ -1,0 +1,32 @@
+#!/bin/sh
+
+# /************************************************************************************\
+# * Trouble Free Admin Center                                                          *
+# * (c)2002 Interserver.net                                                            *
+# * ---------------------------------------------------------------------------------- *
+# * Description: Download package from mirror into tmp folder                          *
+# \************************************************************************************/
+
+if [ "$*" = "" ]; then
+        echo "Nothing Passed"
+        exit;
+fi
+
+MIRROR=mirror.trouble-free.net
+if [ "$3" = "" ]; then
+	TMP=/root/tmp
+else
+	TMP=$3;
+fi
+echo "Using tmpdir $TMP";
+if [ ! -d $TMP ]; then
+	echo 'tmpdir does not exist';
+	exit;
+fi
+
+if [ "$2" = "--verbose" ]; then
+        wget http://$MIRROR/$1 --directory-prefix=$TMP
+else
+        wget http://$MIRROR/$1 --directory-prefix=$TMP >/dev/null 2>&1
+fi
+

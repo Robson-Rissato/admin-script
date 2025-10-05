@@ -1,0 +1,21 @@
+#!/bin/bash
+
+if [ "$1" = "" ]; then
+        echo 'Usage ./scanfilename filename';
+        exit;
+fi
+
+if [ -L /admin/scanner/clamscanrun.sh ]; then
+        if [ -x /usr/bin/locate ]; then
+                for filename in `locate /${1} | grep /home`; do
+                        if [ -f "$filename" ]; then
+				echo "scanning ${filename}";
+                                /admin/scanner/clamscanrun.sh "${filename}"
+                        fi
+                done
+        else
+                echo 'Requires /usr/bin/locate';
+        fi
+else
+        echo 'Requires /admin/scanner/clamscanrun.sh';
+fi

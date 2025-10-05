@@ -1,0 +1,40 @@
+#!/bin/sh
+
+# /************************************************************************************\
+# * Trouble Free Admin Center                                                          *
+# * (c)2002 Interserver.net                                                            *
+# * ---------------------------------------------------------------------------------- *
+# * Description: Check MD5 Sum on specified package                                    *
+# \************************************************************************************/
+
+# expectmd5sum, location
+# 0 ok, 1 bad
+
+if [ "$1" = "" -o "$2" = "" ]; then
+ 	echo "Error: Nothing passed"
+ 	exit;
+fi
+
+if [ "$3" = "" ]; then
+	tmp=/root/tmp
+else
+	tmp=$3
+fi
+
+if [ ! -e $tmp/$2 ]; then
+        echo 1
+        exit;
+fi
+
+
+if [ -e /etc/master.passwd ]; then
+	check="$(md5 $tmp/$2 | cut -d" " -f4)";
+else
+        check="$(md5sum $tmp/$2 | cut -d" " -f1)";
+fi
+
+if [ "$1" = "$check" ]; then
+ 	echo 0
+else
+ 	echo 1
+fi

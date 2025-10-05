@@ -1,0 +1,252 @@
+#!/bin/bash
+
+#
+# this scripts has been designed for InterServer managed servers
+#
+
+if [ ! -e /etc/redhat-release ]; then
+	echo 'Requires RHEL/CentOS';
+	exit;
+fi
+
+if [ ! "$1" = "yes" ]; then
+	echo 'Must run with yes';
+	exit;
+fi
+
+# interserver specific
+INT=1;
+if [ "$2" = "cust" ]; then
+	INT=0;
+fi
+
+if [ -e /root/cpaneldirect ]; then
+	echo 'installer ran';
+	exit;
+fi
+#
+# start install
+#
+
+rsync -a rsync://rsync.is.cc/admin /admin
+/admin/upscripts
+
+mkdir -p /vz/customtemplates
+
+if [ "$INT" = "1" ]; then
+	mkdir -p /root/tmp /root/cpaneldirect
+fi
+
+#
+# some limited security
+#
+/admin/resolvconf
+/admin/sshkeyme
+
+
+if [ "$INT" = "1" ]; then
+	echo "sshd: ALL" >> /etc/hosts.deny
+	echo "sshd: 66.45.228.251" >> /etc/hosts.allow
+	echo "sshd: 66.45.228.100" >> /etc/hosts.allow
+	echo "sshd: 66.45.228.200" >> /etc/hosts.allow
+	echo "AllowUsers root@66.45.228.251 root@66.45.228.100 root@66.45.228.200" >> /etc/ssh/sshd_config
+	/admin/replace-linux "\#PermitRootLogin yes" "PermitRootLogin without-password" -- /etc/ssh/sshd_config
+	/admin/replace-linux "\#UseDNS yes" "UseDNS no" -- /etc/ssh/sshd_config
+
+	echo "from=\"66.45.228.100 66.45.228.200\",command="/root/cpaneldirect/update_program.sh" ssh-rsa AAAAB3NzaC1yc2EAAAABIwAAAIEA+GLu9k5I4w0Qc6L3AXHUEygAup/N6j35CMuSgiOAvyavr1Al9mZYV/wVWxDFXAYVojS1RTnkB2AuB8wi+QLpeOuJFiwSeH+UtEPi1S3XufoNggiDVBxi9OjvQeM51BZNowQqRjip0josBmgxGqvKWY5FDtehuw30gqehp1E6eB8= root@nucleus.interserver.net" >> /root/.ssh/authorized_keys2
+fi
+
+/admin/yumcron
+
+cat > /etc/yum.repos.d/openvz.repo <<EOF
+[openvz-os]
+name=OpenVZ
+mirrorlist=http://download.openvz.org/virtuozzo/mirrorlists/7.0/releases-os.mirrorlist
+#baseurl=http://download.openvz.org/virtuozzo/releases/7.0/x86_64/os/
+enabled=1
+gpgcheck=1
+priority=50
+gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-Virtuozzo-7
+
+[openvz-updates]
+name=OpenVZ Updates
+mirrorlist=http://download.openvz.org/virtuozzo/mirrorlists/7.0/updates-os.mirrorlist
+#baseurl=http://download.openvz.org/virtuozzo/updates/7.0/x86_64/os/
+enabled=1
+gpgcheck=1
+priority=50
+gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-Virtuozzo-7
+
+[openvz-os-debuginfo]
+name=OpenVZ os Debug packages
+mirrorlist=http://download.openvz.org/virtuozzo/mirrorlists/7.0/releases-debug.mirrorlist
+#baseurl=http://download.openvz.org/virtuozzo/releases/7.0/x86_64/debug/
+enabled=0
+gpgcheck=1
+gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-Virtuozzo-7
+
+[openvz-updates-debuginfo]
+name=OpenVZ updates Debug packages
+mirrorlist=http://download.openvz.org/virtuozzo/mirrorlists/7.0/updates-debug.mirrorlist
+#baseurl=http://download.openvz.org/virtuozzo/updates/7.0/x86_64/debug/
+enabled=0
+gpgcheck=1
+gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-Virtuozzo-7
+
+EOF
+
+cat > /etc/yum.repos.d/vzlinux.repo <<EOF
+
+# virtuozzolinux.repo
+#
+# The mirror system uses the connecting IP address of the client and the
+# update status of each mirror to pick mirrors that are updated to and
+# geographically close to the client.  You should use this for VirtuozzoLinux updates
+# unless you are manually picking other mirrors.
+#
+[virtuozzolinux-base]
+name=VirtuozzoLinux Base
+mirrorlist=http://repo.virtuozzo.com/vzlinux/mirrorlist/mirrors-7-os
+#baseurl=http://repo.virtuozzo.com/vzlinux/7/$basearch/os/
+enabled=1
+gpgcheck=1
+gpgkey=file:///etc/pki/rpm-gpg/VZLINUX_GPG_KEY
+       file:///etc/pki/rpm-gpg/RPM-GPG-KEY-Virtuozzo-7
+
+#released updates
+[virtuozzolinux-updates]
+name=VirtuozzoLinux Updates
+mirrorlist=http://repo.virtuozzo.com/vzlinux/mirrorlist/mirrors-7-updates
+#baseurl=http://repo.virtuozzo.com/vzlinux/7/$basearch/updates/
+enabled=1
+gpgcheck=1
+gpgkey=file:///etc/pki/rpm-gpg/VZLINUX_GPG_KEY
+       file:///etc/pki/rpm-gpg/RPM-GPG-KEY-Virtuozzo-7
+
+[virtuozzolinux-base-debuginfo]
+name=VirtuozzoLinux Base debug packages
+mirrorlist=http://repo.virtuozzo.com/vzlinux/mirrorlist/mirrors-7-os-debug
+#baseurl=http://repo.virtuozzo.com/vzlinux/7/$basearch/debug/
+enabled=0
+gpgcheck=1
+gpgkey=file:///etc/pki/rpm-gpg/VZLINUX_GPG_KEY
+       file:///etc/pki/rpm-gpg/RPM-GPG-KEY-Virtuozzo-7
+
+[virtuozzolinux-updates-debuginfo]
+name=VirtuozzoLinux Updates debug packages
+mirrorlist=http://repo.virtuozzo.com/vzlinux/mirrorlist/mirrors-7-updates-debug
+#baseurl=http://repo.virtuozzo.com/vzlinux/7/$basearch/updates-debug/
+enabled=0
+gpgcheck=1
+gpgkey=file:///etc/pki/rpm-gpg/VZLINUX_GPG_KEY
+       file:///etc/pki/rpm-gpg/RPM-GPG-KEY-Virtuozzo-7
+
+[virtuozzolinux-factory]
+name=VirtuozzoLinux Factory
+mirrorlist=http://repo.virtuozzo.com/vzlinux/mirrorlist/mirrors-7-factory
+#baseurl=http://repo.virtuozzo.com/vzlinux/7/$basearch/factory/
+enabled=1
+gpgcheck=0
+
+[virtuozzolinux-factory-debuginfo]
+name=VirtuozzoLinux Factory debug packages
+mirrorlist=http://repo.virtuozzo.com/vzlinux/mirrorlist/mirrors-7-factory-debug
+#baseurl=http://repo.virtuozzo.com/vzlinux/7/$basearch/factory-debug/
+enabled=0
+gpgcheck=0
+
+
+EOF
+
+
+yum --nogpgcheck -y install vzlinux-release
+yum -y update --skip-broken
+yum install -y ubuntu-16.10-x86_64-ez php-cli rpm-build subversion vzp-rpm-config vztt-devel pakchois perl-srpm-macros ioping suse-42.2-x86_64-ez neon php-common dwz perl-Thread-Queue vzpkgenvzypp44x64 suse-42.1-x86_64-ez libasan vzkernel subversion-libs patch fedora-23-x86_64-ez php vzkernel xinetd vzkernel vzpkgenvzypp49x64 libzip redhat-rpm-config debian-7.0-x86_64-ez vzkernel vzctl
+
+#
+# sync date
+#
+/admin/rdatecron
+ln -sf /usr/share/zoneinfo/America/New_York /etc/localtime
+
+#
+# tools
+#
+mkdir -p /tools
+
+if [ "$INT" = "1" ]; then
+#
+#rc.local
+#
+cat >> /etc/rc.d/rc.local <<EOF
+echo 50000 >  /proc/sys/net/ipv4/tcp_max_tw_buckets_ub
+echo 256000 > /proc/sys/net/ipv4/netfilter/ip_conntrack_max
+setterm -blank 0
+for i in ipt_recent ipt_owner iptable_nat xt_connlimit tun ppp ppp_mppe ppp_async ipcomp esp4 xfrm4_tunnel af_key; do
+        modprobe \$i
+done
+
+EOF
+
+# proc check
+ln -s /tools/proc_check.sh /etc/cron.hourly/proc_check.sh
+
+fi
+# end int from rc.local section
+
+
+#
+#sysctl
+#
+echo IPTABLES=\"ipt_REJECT ipt_tos ipt_TOS ipt_LOG ip_conntrack ipt_limit ipt_multiport iptable_filter iptable_mangle ipt_TCPMSS ipt_tcpmss ipt_ttl ipt_length ipt_state iptable_nat ip_nat_ftp ip_tables ipt_multiport iptable_filter ipt_limit ipt_conntrack ip_conntrack_ftp ipt_state\" >> /etc/vz/vz.conf
+
+#
+if [ "$INT" = "1" ]; then
+
+	ln -s /admin/vzconfbackup /etc/cron.daily/vzconfbackup
+	cd /root/tmp
+	if [ -f crontmp ]; then
+		/bin/rm crontmp
+	fi
+	crontab -l > crontmp
+	echo "*/1 * * * * cd /root/cpaneldirect && ./vps_cron.sh" >> crontmp
+	crontab crontmp
+	/bin/rm crontmp
+
+	/tools/vz7templatecron
+
+	chattr +i /var/spool/cron/root
+
+fi
+#end int from other stuff
+
+echo "Please sync /root/cpaneldirect"
+echo
+echo "You must now reboot"
+echo
+echo "Ensure SELinux and the firewall is off run system-config-securitylevel-tui"
+echo 
+echo "and remove the kernel (leaving vzkernel)"
+
+if [ "$INT" = "1" ]; then
+	echo -e "#!/bin/sh\n\nrsync -av rsync://vpsadmin.interserver.net/vps/cpaneldirect/ /root/cpaneldirect/\n" > /root/cpaneldirect/upscripts
+	chmod +x /root/cpaneldirect/upscripts
+
+	echo -e "#!/bin/sh\n\nrsync -av rsync://vpsadmin.interserver.net/vps/openvz/ /tools/\n" > /tools/upscripts
+	chmod +x /tools/upscripts
+
+fi
+
+rpm -Uvh http://mirror.trouble-free.net/3ware/MegaCli-8.07.14-1.noarch.rpm
+ln -s /opt/MegaRAID/MegaCli/MegaCli64 /usr/bin/megacli
+ln -s /opt/MegaRAID/MegaCli/MegaCli64 /usr/bin/MegaCli
+
+if [ "$INT" = "1" ]; then
+
+	echo 'Must run /tools/upscripts && /root/cpaneldirect/upscripts && /root/cpaneldirect/swift.sh && /tools/vz7templatesync.sh and add ip to 67.211.212.154' >> /etc/motd
+
+	cat /etc/motd
+fi
+
+systemctl restart vz.service
+

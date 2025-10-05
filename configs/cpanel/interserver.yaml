@@ -1,0 +1,5 @@
+--- 
+"dnslists": 
+  - 'rbl.interserver.net'
+"name": 'interserver'
+"url": 'http://rbl.interserver.net'

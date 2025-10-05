@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+
+# 1/6/2025
+# properly adjust settings for template when fiving to a user
+
+# runs through /admin/firstbootkvm
+
+if [ "$1" = "force" ]; then
+	echo 'Force run';
+else
+	if [ -f /etc/_firstboot ]; then
+		exit;
+	fi
+fi
+
+ip=`/usr/sbin/ip -4 addr show eth0 | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | head -n 1`;
+
+if [[ $ip =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        if [ "$ip" = "64.20.46.222" ]; then
+                echo 'No changes needed';
+        else
+		# always change the ip
+		echo y | /usr/local/directadmin/scripts/ipswap.sh 64.20.46.222 $ip
+		/admin/res httpd all
+		if [ -x /admin/storage/config/fixlisc ]; then
+			/admin/storage/config/fixlisc force
+		fi
+        fi
+else
+        echo 'Error finding ip';
+fi

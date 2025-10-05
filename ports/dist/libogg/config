@@ -1,0 +1,9 @@
+NAME='libogg';
+VERSION='1.1.3';
+MD5='eaf7dc6ebbff30975de7527a80831585';
+EXT='tar.gz';
+DEPS='gcc gcc-c++';
+CONFIG='./configure';
+MAKE='make';
+MAKEINSTALL='make install';
+LDCONFIG=1

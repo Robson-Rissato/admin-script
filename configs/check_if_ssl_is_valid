@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+
+if [ ! -x /usr/bin/curl ]; then
+	echo 'Missing /usr/bin/curl';
+	exit;
+fi
+
+if [ "$1" = "" ]; then
+	echo 'Usage ./check_if_ssl_is_valid domain (optional port)';
+	exit;
+else
+	DOMAIN="$1"
+	if [ "$2" = "" ]; then
+		PORT="443";
+	else
+		PORT="$2";
+	fi
+fi
+
+if curl --connect-timeout 10 --silent --show-error --fail --insecure --head "https://$DOMAIN:$PORT" 2>&1 | egrep -q "Could not resolve host|SSL certificate problem"; then
+    echo "SSL Certificate is INVALID for $DOMAIN"
+    exit 1
+else
+    echo "SSL Certificate is VALID for $DOMAIN"
+    exit 0
+fi
+

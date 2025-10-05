@@ -1,0 +1,35 @@
+#!/bin/bash
+
+#a607afa695a511765b40993a64c6e2f4  stress-1.0.4.tar.gz
+stress="stress-1.0.4.tar.gz"
+
+if [ "$stress" = "" ]; then
+	exit;
+fi
+
+if [ -e "/usr/local/bin/stress" ]; then
+	echo "Stress is already installed"
+	exit;
+fi
+
+rm -f /root/tmp/$stress
+/admin/getpackage /sources/$stress
+check=$(/admin/checkmd5 a607afa695a511765b40993a64c6e2f4 $stress)
+
+if [ "$check" = "0" ]; then
+	cd /root/tmp
+	dir="$(tar -xvzf $stress | tail -n 1 | sed s#"\./"#""#g | cut -d/ -f1)"	
+	cd $dir
+	./configure
+	make
+	make install
+	echo "Example Command: stress --cpu 8 --io 4 --vm 2 --vm-bytes 128M --timeout 20s"
+else
+	echo "MD5 Sum Does not Match"
+fi
+
+rm -f /root/tmp/$stress
+
+if [ ! "$dir" = "" ]; then
+	rm -rf /root/tmp/$dir
+fi

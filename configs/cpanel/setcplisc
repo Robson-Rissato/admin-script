@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+
+# runs through /admin/firstbootkvm
+
+if [ -f /etc/_firstboot ]; then
+	if [ ! "$1" = "force" ]; then
+		exit;
+	fi
+fi
+
+export PATH=/usr/local/cpanel/3rdparty/lib/path-bin:/usr/share/Modules/bin:/usr/local/cpanel/3rdparty/lib/path-bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/opt/cpanel/composer/bin:/root/bin
+
+sleep 5s;
+ip=`/usr/sbin/ip -4 addr show eth0 | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | head -n 1`;
+if [[ $ip =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        if [ "$ip" = "64.20.46.222" ]; then
+                echo 'No changes needed';
+        else
+		if [ -f /etc/wwwacct.conf ]; then
+			check=`grep 64.20.46.222 /etc/wwwacct.conf | awk '{print $2}' | grep -v cprapid.com`;
+			if [ "$check" = "64.20.46.222" ]; then
+                		if [ -x /admin/replace-linux ]; then
+                        		/admin/replace-linux 64.20.46.222 $ip -- /etc/wwwacct.conf
+					ip2host=`echo $ip | tr "." "-"`;
+                			echo "Using hostname $ip2host.cprapid.com";
+					if [ -x /usr/bin/hostname ]; then
+						/usr/bin/hostname $ip2host.cprapid.com
+						if [ -x /usr/local/cpanel/cpkeyclt ]; then
+							/usr/local/cpanel/cpkeyclt && /scripts/ensure_hostname_resolves --yes && /usr/local/cpanel/bin/checkallsslcerts
+						else
+							echo 'Missing /usr/local/cpanel/cpkeyclt';
+						fi
+					else
+						echo 'Missing hostname';
+					fi
+                		fi
+			else
+				echo 'Missing replace';
+			fi
+		else
+			echo 'missing /etc/wwwacct.conf';
+		fi
+        fi
+else
+        echo "Error finding ip got back $ip";
+fi

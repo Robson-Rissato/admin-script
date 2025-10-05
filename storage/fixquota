@@ -1,0 +1,1324 @@
+#!/usr/bin/env bash
+
+# modified 07/21/2025
+# this runs daily and is will be used like the upate litespeed script on cpanel servers
+# oh we should run update litespeed on da
+
+# /admin/storage/fixquota skip will skip quota
+# /admin/storage/fixquota fast will skip quota and rewrite_confs
+# /admin/mccleanqueue runs on da and cpanel systems hourly some killall commands are there
+# change to stable branch in da
+# disable antibot mode on directadmin causing login issues - 12/12/2024
+# disable login_keys_notify_on_creation reported as spam sometimes
+# disable dynamic motd
+# disable resource limit notifications that clients get annoyed at for cloudlinux
+# enable lost password
+# fix quotas on rhel systems if trying to use the zfs method
+# update custom dovecot compile if it exists
+
+if [ ! -d /usr/local/directadmin/data/users ]; then
+        echo 'Requires directadmin';
+        exit;
+fi
+
+if [ ! -x /usr/sbin/zfs ]; then
+        echo 'Missing /usr/sbin/zfs skipping zfs functions';
+fi
+
+maxload='30';
+
+# this only needs to run once
+# added 4/12/2025
+if [ -x /usr/bin/replace ]; then
+	if [ -f /usr/local/directadmin/plugins/softaculous/images/universal.php ]; then
+		replace centos.is.cc `hostname` -- /usr/local/directadmin/plugins/softaculous/images/universal.php
+	fi
+fi
+function set_quota() {
+	myuser=$1;
+	#echo $myuser;
+	if [ -f /usr/local/directadmin/data/users/$myuser/user.conf ]; then
+                # quota is in mb
+		if [ "$myuser" = "admin" ]; then
+			echo '.admin user getting set to unlimited';
+			zfs set quota=none vz/admin
+			zfs set refquota=none vz/admin
+			zfs set userquota@admin=none vz/admin
+		else
+                	myquota=`grep ^quota /usr/local/directadmin/data/users/$myuser/user.conf | cut -d= -f2`;
+                	# test we are a number
+                	if [[ $myquota =~ ^[0-9]+$ ]] ; then
+                        	echo "..Setting user $myuser to quota $myquota in MB ";
+				# quota includes snapshots
+                        	zfs set quota=none vz/${myuser}
+				zfs set refquota=${myquota}M vz/${myuser}
+                        	zfs set userquota@${myuser}=${myquota}M vz/${myuser}
+			else
+				echo '...We do not have any quota set on the account setting 1TB';
+				zfs set quota=none vz/${myuser}
+				zfs set refquota=1T vz/${myuser}
+                        	zfs set userquota@${myuser}=1T vz/${myuser}
+                	fi
+		fi
+        fi
+
+
+
+}
+
+## 
+## BEGIN
+## 
+
+##
+## Create initial directories if they don't exist
+##
+
+for dir_needed in /usr/local/directadmin/data/templates/custom /backup; do
+	if [ ! -d ${dir_needed} ]; then
+		mkdir -p ${dir_needed}
+	fi
+done
+
+
+##
+## set quota defaults
+##
+if [ "$1" = "" ]; then
+		if [ -x /usr/sbin/zfs ]; then
+                	for user in `ls /usr/local/directadmin/data/users | egrep -v "admin|quags"`; do
+                       		echo -n 'working on';
+                        	echo -n " $user.";
+                        	curload=`awk '{print $1}' /proc/loadavg  | cut -d. -f1`;
+                        	if [ "$curload" -lt "$maxload" ]; then
+                               		echo -n ".load ok.";
+                               		set_quota $user
+                        	else
+                                	echo "Break from setting quotas due to load of $curload";
+                        	fi
+                	done
+		fi
+elif [ "$1" = "skip" -o $1 = "fast" ]; then
+	echo ' Skipping quota for fast run';
+else
+	set_quota $1
+	exit 0;
+fi
+
+echo
+
+##
+## set jailshell
+## skip on cloudlinux
+##
+
+if [ -e /bin/cagefs.server ]; then
+	echo 'Skipping jailshell/bubblewrap/cgroups for cloudlinux systems';
+	/usr/local/directadmin/directadmin set jail 0
+else
+	if [ "$1" = "skip" -o "$1" = "fast" ]; then
+		echo ' Skipping jailshell for fast run';
+	else
+		echo 'Setting jailshell';
+		for i in `ls /usr/local/directadmin/data/users | egrep -v "admin|quags"`; do chsh -s /usr/bin/jailshell $i; done
+	fi
+
+	# cgroups for storage
+	if [ ! -e /usr/sbin/unitd ]; then
+	        # install cgroups config
+        	/admin/storage/buildcgroup
+	fi
+fi
+
+
+# zfs quotas
+if [ -x /usr/sbin/zfs ]; then
+
+	# detain needs this for zpool list
+	if [ ! -d /usr/local/directadmin/bin ]; then
+        	mkdir -p /usr/local/directadmin/bin
+	fi
+
+
+	# update quota if needed
+	cd /usr/local/directadmin/bin
+	/bin/cp -u -v /admin/storage/quota /usr/local/directadmin/bin/quota && chown root:root /usr/local/directadmin/bin/quota
+	/bin/cp -u -v /admin/storage/repquota /usr/local/directadmin/bin/repquota && chown root:root /usr/local/directadmin/bin/repquota
+
+	if [ ! -f /usr/local/directadmin/bin/setquota ]; then
+		echo 'Missing /usr/local/directadmin/bin/setquota adding it in';
+		cp /admin/storage/setquota /usr/local/directadmin/bin/setquota
+		chown root:root /usr/local/directadmin/bin/setquota
+		/usr/local/directadmin/directadmin set setquota /usr/local/directadmin/bin/setquota restart
+	else
+		/bin/cp -u -v /admin/storage/setquota /usr/local/directadmin/bin/setquota && chown root:root /usr/local/directadmin/bin/setquota
+	fi
+fi
+
+##
+## rspamd fix on new account if rspamd is installed
+##
+if [ -e /usr/bin/rspamd ]; then
+	if [ -e /admin/storage/domain_create_post.sh ]; then
+		if [ ! -e /usr/local/directadmin/scripts/custom/domain_create_post.sh ]; then
+			cp /admin/storage/domain_create_post.sh /usr/local/directadmin/scripts/custom/domain_create_post.sh
+			chown diradmin:diradmin /usr/local/directadmin/scripts/custom/domain_create_post.sh
+		else
+			cp -u -v  /admin/storage/domain_create_post.sh /usr/local/directadmin/scripts/custom/domain_create_post.sh
+			chmod 755 /usr/local/directadmin/scripts/custom/domain_create_post.sh
+		fi
+	fi
+fi
+
+if [ -f /admin/storage/domain_create_pre.sh ]; then
+	if [ ! -e /usr/local/directadmin/scripts/custom/domain_create_pre.sh ]; then
+		cp /admin/storage/domain_create_pre.sh /usr/local/directadmin/scripts/custom/domain_create_pre.sh
+		chown diradmin:diradmin /usr/local/directadmin/scripts/custom/domain_create_pre.sh
+		echo 'Added domain_create_pre.sh to block cf and freenom domains';
+		echo
+	else
+		cp -u -v /admin/storage/domain_create_pre.sh /usr/local/directadmin/scripts/custom/domain_create_pre.sh
+	fi
+fi
+
+#blocked domains
+if [ -f /admin/ml/commondomains ]; then
+	if [ ! -f /usr/local/directadmin/scripts/custom/commondomains ]; then
+		cp /admin/ml/commondomains /usr/local/directadmin/scripts/custom/commondomains
+		chown diradmin:diradmin /usr/local/directadmin/scripts/custom/commondomains
+		echo "Added /usr/local/directadmin/scripts/custom/commondomains";
+	else
+		cp -u -v /admin/ml/commondomains /usr/local/directadmin/scripts/custom/commondomains
+	fi
+fi
+
+# dovecot config if in use
+if [ -f /usr/local/directadmin/custombuild/custom/dovecot/configure.dovecot ]; then
+	if [ -f /admin/storage/config/dovecot/configure.dovecot ]; then
+		cp -u -v /admin/storage/config/dovecot/configure.dovecot /usr/local/directadmin/custombuild/custom/dovecot/configure.dovecot
+		chown diradmin:diradmin /usr/local/directadmin/custombuild/custom/dovecot/configure.dovecot
+		chmod +x /usr/local/directadmin/custombuild/custom/dovecot/configure.dovecot
+	else
+		echo 'NOTE: /usr/local/directadmin/custombuild/custom/dovecot/configure.dovecot exists but there is no /admin/storage/config/dovecot/configure.dovecot if we do not have a custom config of dovecot to track remove the custombuild override';
+		sleep 5;
+	fi
+fi
+##
+## forbidden domains list
+##
+/bin/cp -u -v /admin/storage/config/forbidden_domains.list /usr/local/directadmin/data/templates/custom/forbidden_domains.list
+
+
+# zfs create
+if [ -x /usr/sbin/zfs ]; then
+	cp -u -v /admin/storage/user_create_post.sh /usr/local/directadmin/scripts/custom/user_create_post.sh   
+	chmod 700 /usr/local/directadmin/scripts/custom/user_create_post.sh 
+
+	# zfs delete
+	cp -u -v /admin/storage/user_destroy_pre.sh /usr/local/directadmin/scripts/custom/user_destroy_pre.sh
+	chmod 700 /usr/local/directadmin/scripts/custom/user_destroy_pre.sh
+else
+	echo 'No zfs detected skipping user create and user destroy post';
+fi
+
+# protect admin login by ips
+cp -u -v /admin/storage/session_create_pre.sh /usr/local/directadmin/scripts/custom/session_create_pre.sh
+chmod 700 /usr/local/directadmin/scripts/custom/session_create_pre.sh
+chown diradmin:diradmin /usr/local/directadmin/scripts/custom/session_create_pre.sh
+
+if [ -f /usr/local/directadmin/scripts/custom/all_pre.sh ]; then
+	echo 'Removing /usr/local/directadmin/scripts/custom/all_pre.sh as it has been replaced with session_create_pre.sh';
+	/bin/rm -v /usr/local/directadmin/scripts/custom/all_pre.sh
+fi
+
+#limit user backup by load
+cp -u -v /admin/storage/user_backup_pre.sh /usr/local/directadmin/scripts/custom/user_backup_pre.sh
+chmod 755 /usr/local/directadmin/scripts/custom/user_backup_pre.sh
+chown diradmin:diradmin /usr/local/directadmin/scripts/custom/user_backup_pre.sh
+
+# restart ssh
+cp -u -v /admin/storage/user_activate_post.sh /usr/local/directadmin/scripts/custom/user_activate_post.sh
+chmod 755 /usr/local/directadmin/scripts/custom/user_activate_post.sh
+chown diradmin:diradmin /usr/local/directadmin/scripts/custom/user_activate_post.sh
+
+# fix login keys
+if [ -d /usr/local/directadmin/data/users ]; then
+	cd /usr/local/directadmin/data/users
+	for i in *; do if [ -f $i/user.conf ]; then /admin/replace-linux login_keys=OFF login_keys=ON -- $i/user.conf; fi; done
+fi
+
+# directadmin packages for storage, propack and non propack
+echo 'Package checks';
+if [ -d /usr/local/directadmin/data/users/admin/packages ]; then
+	# unitd being used to detect propack
+	if [ ! -e /usr/sbin/unitd ]; then
+		echo 'Propack not detected';
+		if [ -d /admin/storage/packages/ ]; then
+			if [ ! -e /usr/local/directadmin/data/users/admin/packages/st100.pkg ]; then
+				echo 'Updating standard packages ';
+				rsync -v -a --exclude packages.list /admin/storage/packages/ /usr/local/directadmin/data/users/admin/packages/
+			fi
+
+			# check if file is empty
+			if [ ! -s /usr/local/directadmin/data/users/admin/packages.list ]; then
+				/bin/cp -f /admin/storage/packages/packages.list /usr/local/directadmin/data/users/admin/packages.list
+			else
+	                	/bin/cp -u -f /admin/storage/packages/packages.list /usr/local/directadmin/data/users/admin/packages.list
+			fi
+
+			chown diradmin:diradmin -R /usr/local/directadmin/data/users/admin/packages/
+			chown diradmin:diradmin /usr/local/directadmin/data/users/admin/packages.list
+			# reseller is separate
+			if [ -d /usr/local/directadmin/data/admin/packages ]; then
+				if [ -d /admin/storage/reseller/packages ]; then
+					if [ ! -e /usr/local/directadmin/data/admin/packages/RSONE.pkg ]; then
+                				echo 'Updating standard reseller packages';
+                				rsync -v -a /admin/storage/reseller/packages/ /usr/local/directadmin/data/admin/packages/
+					fi
+
+					if [ ! -s /usr/local/directadmin/data/admin/packages.list ]; then
+						/bin/cp -f /admin/storage/reseller/packages.list /usr/local/directadmin/data/admin/packages.list
+					else
+	                			/bin/cp -u -f /admin/storage/reseller/packages.list /usr/local/directadmin/data/admin/packages.list
+					fi
+        			fi
+				chown diradmin:diradmin -R /usr/local/directadmin/data/admin/packages/
+				chown diradmin:diradmin /usr/local/directadmin/data/admin/packages.list
+			fi
+		fi
+	# this is propack stuff
+	else
+		echo 'Detected propack';
+		if [ -d /admin/storage/propack/packages ]; then
+			if [ ! -e /usr/local/directadmin/data/users/admin/packages/Standard.pkg ]; then
+				echo 'Updating Propack packages';
+				rsync -v -a /admin/storage/propack/packages/ /usr/local/directadmin/data/users/admin/packages/
+			fi
+			if [ ! -s /usr/local/directadmin/data/users/admin/packages.list ]; then
+				/bin/cp -f /admin/storage/propack/packages.list /usr/local/directadmin/data/users/admin/packages.list
+			else
+	                	/bin/cp -u -f /admin/storage/propack/packages.list /usr/local/directadmin/data/users/admin/packages.list
+			fi
+		fi
+
+		if [ -d /admin/storage/propack/reseller ]; then
+			if [ -d /usr/local/directadmin/data/admin/packages ]; then
+				if [ ! -e /usr/local/directadmin/data/admin/packages//RSONE.pkg ]; then
+					echo 'Updating propack reseller packages';
+					rsync -v -a /admin/storage/propack/reseller/packages/ /usr/local/directadmin/data/admin/packages/
+				fi
+				if [ ! -s /usr/local/directadmin/data/admin/packages.list ]; then
+	                                /bin/cp -f /admin/storage/propack/reseller/packages.list /usr/local/directadmin/data/admin/packages.list
+				else
+					/bin/cp -u -f /admin/storage/propack/reseller/packages.list /usr/local/directadmin/data/admin/packages.list
+				fi
+			fi
+		fi
+
+		if [ -d /usr/local/directadmin/data/users/admin/packages/ ]; then
+			chown diradmin:diradmin -R /usr/local/directadmin/data/users/admin/packages/
+		fi
+
+		if [ -f /usr/local/directadmin/data/users/admin/packages.list ]; then
+			chown diradmin:diradmin /usr/local/directadmin/data/users/admin/packages.list
+			chmod 600 /usr/local/directadmin/data/users/admin/packages.list
+		fi
+
+		# set permissions
+		if [ -d /usr/local/directadmin/data/admin/packages/ ]; then
+			chown diradmin:diradmin -R /usr/local/directadmin/data/admin/packages/
+		fi
+
+		if [ -f /usr/local/directadmin/data/admin/packages.list ]; then
+			chown diradmin:diradmin /usr/local/directadmin/data/admin/packages.list
+                	chmod 600 /usr/local/directadmin/data/admin/packages.list
+		fi
+	fi
+fi
+
+echo
+
+# ip whitelist
+#if [ -f /admin/storage/ip_whitelist ]; then
+#	echo 'Updating ip whitelist ';
+#	if [ ! -s /usr/local/directadmin/data/admin/ip_whitelist ]; then
+#		cp -f /admin/storage/ip_whitelist /usr/local/directadmin/data/admin/ip_whitelist
+#	else
+#		cp -u -f /admin/storage/ip_whitelist /usr/local/directadmin/data/admin/ip_whitelist
+#	fi
+#fi
+
+# ips to whitelist instead of having a running list
+if [ -f /usr/local/directadmin/data/admin/ip_whitelist ]; then
+	for whitelistip in 127.0.0.1 216.158.226.14 192.64.80.218 192.64.80.219 192.64.80.220 192.64.80.221 192.64.80.222; do
+		wlcheck=`grep ^${whitelistip} /usr/local/directadmin/data/admin/ip_whitelist | tail -n 1`;
+		if [ "$wlcheck" = "" ]; then
+			echo ${whitelistip} >> /usr/local/directadmin/data/admin/ip_whitelist
+			echo "addiing ${whitelistip} to /usr/local/directadmin/data/admin/ip_whitelist";
+		fi
+	done
+fi
+
+echo
+
+# update litespeed
+if [ "$1" = "fast" ]; then
+	echo 'Skipping update litespeed and tmpreaper on fast';
+else
+	shorthostname=`hostname -s | cut -c1-7`;
+	if [ "$shorthostname" = "storage" ]; then
+		echo 'Skipping litespeed updates on storage systems';
+	else
+		# we are not updating litespeed here because custombuild is handling it
+		if [ -f /usr/local/lsws/conf/httpd_config.xml ]; then
+			if [ ! "$1" = "fast" ]; then
+				cp -u -f /admin/storage/config/httpd_config.xml /usr/local/lsws/conf/httpd_config.xml && chmod 600 /usr/local/lsws/conf/httpd_config.xml && chown lsadm:lsadm /usr/local/lsws/conf/httpd_config.xml && echo 'updated /usr/local/lsws/conf/httpd_config.xml' && /admin/res httpd && echo 'updated litespeed xml'
+			fi
+			if [ ! -f /usr/local/directadmin/data/templates/custom/cust_httpd.CUSTOM.2.pre ]; then
+        			mkdir -p /usr/local/directadmin/data/templates/custom/
+        			cat > /usr/local/directadmin/data/templates/custom/cust_httpd.CUSTOM.2.pre <<EOF
+<IfModule Litespeed>
+  CacheRoot lscache
+</IfModule>
+EOF
+			        /admin/res httpd
+  		      		echo 'Updated litespeed config cust_httpd.CUSTOM.2.pre';
+
+			fi
+			if [ -d /usr/local/lsws/logs ]; then
+				if [ -x /usr/sbin/tmpreaper ]; then
+					tmpreaper --verbose 100h /usr/local/lsws/logs
+				fi
+			fi
+		else
+			echo 'Litespeed not found but we are not storage?';
+		fi
+	fi
+fi
+
+echo
+
+# zfs additions
+if [ -x /usr/sbin/zfs ]; then
+	if [ -f /usr/local/directadmin/scripts/custom/user_destroy_post.sh ]; then
+		mv /usr/local/directadmin/scripts/custom/user_destroy_post.sh /usr/local/directadmin/scripts/custom/user_destroy_pre.sh
+	fi
+fi
+
+# remove lsws logs that are not needed
+if [ -d /usr/local/lsws/logs ]; then
+	cd /usr/local/lsws/logs
+	year=`date +%Y`;
+	/bin/rm -v /usr/local/lsws/logs/*.${year}_*
+fi
+
+echo
+
+if [ -f /root/.bash_profile -o -f /root/.bashrc ]; then
+        if [ -f /root/.bash_profile ]; then
+                thefile=/root/.bash_profile;
+        elif [ -f /root/.bashrc ]; then
+                thefile=/root/.bashrc;
+        else
+                echo 'Error in histtimeformat: How did I get there';
+                exit;
+        fi
+
+        hcheck=`grep HISTTIMEFORMAT ${thefile}`;
+        if [ "$hcheck" = "" ]; then
+                echo 'Adding histtimeformat';
+                echo 'export HISTTIMEFORMAT="%m/%d/%y %T "' >> ${thefile}
+        else
+                echo 'Histtimeformat is done';
+        fi
+fi
+
+echo
+
+# settings
+
+#https://cloudlinux.zendesk.com/hc/en-us/articles/4414825874706-How-to-enable-or-disable-Imunify360-anti-bot-protection
+#imunify360-agent config update '{"WEBSHIELD": {"splash_screen": true}}' - this enables
+#imunify360-agent config update '{"WEBSHIELD": {"splash_screen": false}}' - this disables
+if [ -x /usr/bin/imunify360-agent ]; then
+	imunify360-agent config update '{"WEBSHIELD": {"splash_screen": false}}'
+fi
+
+# no need to high load messages in directadmin message system since we don't use it
+/usr/local/directadmin/directadmin set check_load 0
+
+# joe uses this
+if [ -x /usr/sbin/zfs ]; then
+	if [ ! -e /usr/local/bin/zpoollist ]; then
+		/bin/cp /admin/storage/zpoollist /usr/local/bin/zpoollist
+	else
+		/bin/cp -u /admin/storage/zpoollist /usr/local/bin/zpoollist
+	fi
+fi
+
+# fix for jetbackup mysqldump
+if [ -d /usr/local/jetapps ]; then
+	# tt 63254 127.0.0.1 is no longer valid
+	for myfile in my.cnf mysql.conf; do
+			if [ -f /usr/local/directadmin/conf/$myfile ]; then
+			jbcheck=`grep ^host=127.0.0.1$ /usr/local/directadmin/conf/$myfile`;
+			if [ "$jbcheck" = "host=127.0.0.1" ]; then
+				#echo "host=127.0.0.1" >> /usr/local/directadmin/conf/$myfile
+				/admin/replace-linux 127.0.0.1 localhost -- /usr/local/directadmin/conf/$myfile
+				echo "added host fix in $myfile";
+			fi
+		fi
+	done
+	# breaks bwrap now so we skip it on debian
+	# fix for Error: mysqldump: Got error: 2002: Can't connect to local MySQL server through socket '/tmp/mysql.sock' (2) when trying to connect
+	# tested manually in snapshot and works
+	# does not appear to affect jailshell
+	if [ -f /etc/redhat-release ]; then
+		if [ ! -e /tmp/mysql.sock ]; then
+			if [ -e /usr/local/mysql/data/mysql.sock ]; then
+				ln -s /usr/local/mysql/data/mysql.sock /tmp/mysql.sock
+			fi
+		fi
+	fi
+fi
+
+echo
+
+# fix for softaculous
+if [ -f /usr/local/directadmin/plugins/softaculous/bin/soft ]; then
+	chmod 4555 /usr/local/directadmin/plugins/softaculous/bin/soft
+fi
+#https://docs.directadmin.com/directadmin/general-usage/disk-usage-bandwidth.html#how-is-disk-space-usage-calculated
+# new default 2 does not allow repquota wrapper to be used
+if [ -x /usr/sbin/zfs ]; then
+	/usr/local/directadmin/directadmin set realtime_quota 0
+fi
+
+# clean /tmp
+# clear old /tmp
+if [ "$1" = "fast" ]; then
+	echo 'Skipping tmpreaper on fast';
+else
+	if [ -x /usr/sbin/tmpreaper ]; then
+		if [ ! -f /admin/configs/_skiptmpclear ]; then
+       			if [ -d /tmp ]; then
+				if [ ! -e /usr/bin/spamd ]; then
+					# restart exim to fix https://forum.directadmin.com/threads/error-with-internal-mail.63639/
+					tmpreaper --showdeleted 8h --protect '/tmp/{lshttpd?,dir{/tmp/lshttpd,}}' --protect '/tmp/lshttpd/*' --protect '/tmp/lshttpd/swap/*' --protect '/tmp/mongodb-27217.sock' --protect '/mysql.sock' --protect '*sock' --protect '*lsb' --protect '*swap*' --protect '/tmp/sess_*' /tmp && systemctl restart exim
+				else
+					echo 'Skipping tmp clear due to spamassassin install';
+				fi
+        		fi
+		else
+			echo 'Skipped tmp clean on /admin/configs/_skiptmpclear';
+		fi
+	else
+        	echo 'tmpreaper is not installed';
+	fi
+fi
+
+echo
+
+# evolution skin config like no new ticket and wordpress manager link
+if [ ! -d /usr/local/directadmin/data/users/admin/skin_customizations/evolution ]; then
+	mkdir -p /usr/local/directadmin/data/users/admin/skin_customizations/evolution
+	echo 'created /usr/local/directadmin/data/users/admin/skin_customizations/evolution';
+fi
+
+# only customize on propack
+if [ -x /usr/sbin/unitd ]; then
+	if [ ! -f /usr/local/directadmin/data/users/admin/skin_customizations/evolution/config.json ]; then
+		cp /admin/storage/config/config.json /usr/local/directadmin/data/users/admin/skin_customizations/evolution/config.json
+		echo 'Imported evolution config changes';
+	else
+		cp -u -f /admin/storage/config/config.json /usr/local/directadmin/data/users/admin/skin_customizations/evolution/config.json && echo 'updated evolution changes'
+	fi
+fi
+
+echo
+
+# this is temporary and can be removed
+# force ssl on maps.mailbaby.net breaks http:// in rspamd 3.0
+if [ -f /etc/rspamd/local.d/multimap.conf ]; then
+	/admin/replace-linux http:// https:// -- /etc/rspamd/local.d/multimap.conf
+fi
+
+# autofixer jetbackup mysql.conf set to 127.0.0.1 as host breaks roundcube on updates
+if [ -f /var/www/html/roundcube/config/config.inc.php ]; then
+	if [ -d /usr/local/jetapps ]; then
+		/admin/replace-linux 127.0.0.1 localhost -- /var/www/html/roundcube/config/config.inc.php
+		if [ -f /admin/storage/fixroundcube ]; then
+			/admin/storage/fixroundcube
+		fi
+	fi
+fi
+
+#autofixer softaculous
+if [ -f /usr/local/directadmin/data/users/admin/skin_customizations/evolution/config.json ]; then
+	if [ -f /usr/local/directadmin/plugins/softaculous/images/themes/default/images/wp-gray.png ]; then
+		/admin/replace-linux /CMD_/PLUGINS/softaculous/images/themes/default/images/wp-gray.png /CMD_PLUGINS/softaculous/images/themes/default/images/wp-gray.png -- /usr/local/directadmin/data/users/admin/skin_customizations/evolution/files/menu-v2.json
+	fi
+fi
+#autofixer easy spam
+if [ -f /etc/exim.easy_spam_fighter/variables.conf ]; then
+	/admin/replace-linux "EASY_HIGH_SCORE_DROP = 100" "EASY_HIGH_SCORE_DROP = 150" -- /etc/exim.easy_spam_fighter/variables.conf
+fi
+echo
+
+#autofixer for quota
+#/usr/local/directadmin/bin/repquota
+if [ -x /usr/sbin/zfs ]; then
+	if [ -f /usr/local/directadmin/bin/repquota ]; then
+		if [ -f /usr/local/directadmin/conf/directadmin.conf ]; then
+			recheck=`grep ^repquota=/usr/local/directadmin/bin/repquota$ /usr/local/directadmin/conf/directadmin.conf`;
+			if [ ! "$recheck" = "repquota=/usr/local/directadmin/bin/repquota$ /usr/local/directadmin/conf/directadmin.conf" ]; then
+				echo 'requota is not set';
+				recheck2=`grep ^repquota= /usr/local/directadmin/conf/directadmin.conf`;
+				if [ "$recheck2" = "" ]; then
+					echo -e "repquota=/usr/local/directadmin/bin/repquota\n" >> /usr/local/directadmin/conf/directadmin.conf && systemctl restart directadmin
+					echo 'Added in requota';
+				else
+					echo 'Error: a requota value is already set so not updating';
+				fi
+			else
+				echo 'requota is properly set';
+			fi		
+		else
+			echo 'ERROR: /usr/local/directadmin/conf/directadmin.conf does not exist or is not a file';
+		fi
+	else
+		echo 'ERROR: /usr/local/directadmin/bin/repquota does not exist';
+	fi
+else
+	if [ -f /usr/local/directadmin/bin/repquota ]; then
+		echo 'ERROR: /usr/local/directadmin/bin/repquota exists with out zfs';
+		echo 'Remove repquota from /usr/local/directadmin/conf/directadmin.conf and /usr/local/directadmin/bin/repquota and remove /usr/local/directadmin/bin';
+		sleep 5s;
+	fi
+fi
+echo
+
+# ftp settings
+if [ -f /admin/storage/config/pureftpd/pure-ftpd.conf ]; then
+	if [ -f /usr/local/directadmin/custombuild/configure/pureftpd/pure-ftpd.conf ]; then
+		cp -u -f /admin/storage/config/pureftpd/pure-ftpd.conf /usr/local/directadmin/custombuild/configure/pureftpd/pure-ftpd.conf && echo 'updated custombuild pureftpd template';
+	fi
+fi
+
+echo
+
+# php settings like upload max
+if [ -f /admin/storage/config/php_settings.json ]; then
+	if [ ! -d /usr/local/directadmin/data/templates/custom ]; then
+		if [ -f /usr/local/directadmin/data/templates/custom ]; then
+			mv /usr/local/directadmin/data/templates/custom /usr/local/directadmin/data/templates/custom.old
+		fi
+		mkdir -p /usr/local/directadmin/data/templates/custom && echo 'created /usr/local/directadmin/data/templates/custom'
+	fi
+	cp -u -f /admin/storage/config/php_settings.json /usr/local/directadmin/data/templates/custom/php_settings.json && echo 'updated php_settings.json'
+fi
+if [ -f /admin/configs/geo/GeoLite2-Country.mmdb ]; then
+        if [ ! -d /usr/share/GeoIP ]; then
+                mkdir -p /usr/share/GeoIP/
+        fi
+        if [ ! -f /usr/share/GeoIP/GeoLite2-Country.mmdb ]; then
+                cp /admin/configs/geo/GeoLite2-Country.mmdb /usr/share/GeoIP/GeoLite2-Country.mmdb
+	else
+		cp -u -f /admin/configs/geo/GeoLite2-Country.mmdb /usr/share/GeoIP/GeoLite2-Country.mmdb && echo 'updated geo ip'
+        fi
+fi
+
+echo
+
+# fix for jailshell/bubblewrap and privatetmp
+if [ -e /etc/systemd/system/mysqld.service ]; then
+	/admin/replace-linux PrivateTmp=true PrivateTmp=false -- /etc/systemd/system/mysqld.service && systemctl daemon-reload
+fi
+
+# php 7.4 and tidy needed for some softaculous services
+if [ ! -d /usr/local/directadmin/custombuild/custom ]; then
+	mkdir -p /usr/local/directadmin/custombuild/custom
+fi
+
+#this is for phpmyadmin and mod security
+if [ ! -f /usr/local/directadmin/custombuild/custom/ap2/conf/extra ]; then
+	mkdir -p /usr/local/directadmin/custombuild/custom/ap2/conf/extra && echo "created /usr/local/directadmin/custombuild/custom/ap2/conf/extra";
+fi
+
+if [ ! -f /usr/local/directadmin/custombuild/custom/ap2/conf/extra/httpd-directoryindex.conf ]; then
+	echo "DirectoryIndex index.php index.html index.htm index.shtml index.phtml" > /usr/local/directadmin/custombuild/custom/ap2/conf/extra/httpd-directoryindex.conf
+	echo 'created /usr/local/directadmin/custombuild/custom/ap2/conf/extra/httpd-directoryindex.conf';
+	sleep 1;
+fi
+
+if [ -f /admin/storage/config/ap2/conf/extra/httpd-vhosts.conf ]; then
+	if [ ! -f /usr/local/directadmin/custombuild/custom/ap2/conf/extra/httpd-vhosts.conf ]; then
+		cp /admin/storage/config/ap2/conf/extra/httpd-vhosts.conf /usr/local/directadmin/custombuild/custom/ap2/conf/extra/httpd-vhosts.conf && echo "created /usr/local/directadmin/custombuild/custom/ap2/conf/extra/httpd-vhosts.conf";
+	else
+		cp -u -f /admin/storage/config/ap2/conf/extra/httpd-vhosts.conf /usr/local/directadmin/custombuild/custom/ap2/conf/extra/httpd-vhosts.conf && echo "updated /usr/local/directadmin/custombuild/custom/ap2/conf/extra/httpd-vhosts.conf"
+	fi
+fi
+
+# we loop through ap2 and php folders now one is for webserver one is for phpcli
+for phpdir in ap2 php; do
+	if [ ! -d /usr/local/directadmin/custombuild/custom/$phpdir ]; then
+		mkdir -p /usr/local/directadmin/custombuild/custom/$phpdir && echo "created /usr/local/directadmin/custombuild/custom/$phpdir";
+	fi
+	# place all php versions here
+	for configscript in configure.php74; do
+		if [ -f /admin/storage/config/$phpdir/$configscript ]; then
+			if [ ! -f /usr/local/directadmin/custombuild/custom/$phpdir/$configscript ]; then
+				cp /admin/storage/config/$phpdir/$configscript /usr/local/directadmin/custombuild/custom/$phpdir/$configscript && echo "created /usr/local/directadmin/custombuild/custom/$phpdir/$configscript";
+			else
+				cp -u -f /admin/storage/config/$phpdir/$configscript /usr/local/directadmin/custombuild/custom/$phpdir/$configscript && echo "updated /usr/local/directadmin/custombuild/custom/$phpdir/$configscript";
+			fi
+		fi
+	done
+done	
+
+echo
+
+# started for mariadb but added litespeed.service for zfs mount waiting
+# systemd custombuild for mariadb to prevent privatetmp=true issues with jailshell
+for systemdfiles in mysqld.service.debian mariadb.service mysqld.service litespeed.service; do
+	export mariadbupdate=0;
+	if [ -f /admin/storage/config/systemd/$systemdfiles ]; then
+		if [ ! -d /usr/local/directadmin/custombuild/custom/systemd ]; then
+			mkdir -p /usr/local/directadmin/custombuild/custom/systemd && echo "created /usr/local/directadmin/custombuild/custom/systemd";
+		fi
+		if [ ! -f /usr/local/directadmin/custombuild/custom/systemd/$systemdfiles ]; then
+			cp /admin/storage/config/systemd/$systemdfiles /usr/local/directadmin/custombuild/custom/systemd/$systemdfiles && export mariadbupdate=1;
+		else
+			cp -u -f /admin/storage/config/systemd/$systemdfiles /usr/local/directadmin/custombuild/custom/systemd/$systemdfiles && export mariadbupdate=1;
+		fi
+		if [ "$mariadbupdate" = "1" ]; then
+			chown root:root /usr/local/directadmin/custombuild/custom/systemd/$systemdfiles
+			chmod 644 /usr/local/directadmin/custombuild/custom/systemd/$systemdfiles
+			echo "updated permissions for /usr/local/directadmin/custombuild/custom/systemd/$systemdfiles due to config update"
+		fi
+	fi
+done
+
+echo
+
+# backup directadmin users and config to zfs for easy snapshot backups. Lets add /etc as well
+if [ -x /usr/sbin/zfs ]; then
+	mountcheck=`mountpoint /backup | grep "is not a mountpoint"`;
+	if [ "$mountcheck" = "/backup is not a mountpoint" ]; then
+		zfs create vz/backup
+		zfs set mountpoint=/backup vz/backup
+		zfs mount -a
+		mkdir -p /backup/mysql_backups
+		if [ -d /usr/local/directadmin/custombuild ]; then
+			cd /usr/local/directadmin/custombuild
+			./build set mysql_backup_dir /backup/mysql_backups
+		else
+			echo 'Odd custombuild does not exist?';
+		fi
+		echo "Created backup mountpoint";
+	fi
+fi
+
+echo
+
+# create /root/.my.cnf if it doesn't exist
+if [ ! -f /root/.my.cnf ]; then
+	if [ -f /usr/local/directadmin/conf/my.cnf ]; then
+		cp /usr/local/directadmin/conf/my.cnf /root/.my.cnf && echo "created /root/.my.cnf from /usr/local/directadmin/conf/my.cnf"
+	fi
+fi
+
+echo
+
+chmod 711 /backup
+
+if [ ! -d /backup/etc ]; then
+	mkdir -p /backup/etc
+fi
+
+if [ ! -d /backup/directadmin ]; then
+	mkdir -p /backup/directadmin/users
+	mkdir -p /backup/directadmin/admin
+fi
+
+# set max username to 30
+#https://www.directadmin.com/features.php?id=2294
+/usr/local/directadmin/directadmin set max_username_length 30 restart
+
+# custombuild hooks
+if [ -f /admin/storage/config/hooks/roundcube/post/jetbackupfix.sh ]; then
+	if [ ! -f /usr/local/directadmin/custombuild/custom/hooks/roundcube/post/jetbackupfix.sh ]; then
+		mkdir -p /usr/local/directadmin/custombuild/custom/hooks/roundcube/post/
+		cp /admin/storage/config/hooks/roundcube/post/jetbackupfix.sh /usr/local/directadmin/custombuild/custom/hooks/roundcube/post/jetbackupfix.sh
+		chmod +x /usr/local/directadmin/custombuild/custom/hooks/roundcube/post/jetbackupfix.sh
+		echo 'Created /usr/local/directadmin/custombuild/custom/hooks/roundcube/post/jetbackupfix.sh hook';
+	else
+		cp -f -u /admin/storage/config/hooks/roundcube/post/jetbackupfix.sh /usr/local/directadmin/custombuild/custom/hooks/roundcube/post/jetbackupfix.sh && echo 'updated /usr/local/directadmin/custombuild/custom/hooks/roundcube/post/jetbackupfix.sh';
+	fi
+fi
+
+if [ -f /admin/storage/config/hooks/mysql/post/roundcubefix.sh ]; then
+	if [ ! -f /usr/local/directadmin/custombuild/custom/hooks/mysql/post/roundcubefix.sh ]; then
+		mkdir -p /usr/local/directadmin/custombuild/custom/hooks/mysql/post/
+		cp /admin/storage/config/hooks/mysql/post/roundcubefix.sh /usr/local/directadmin/custombuild/custom/hooks/mysql/post/roundcubefix.sh
+		chmod +x /usr/local/directadmin/custombuild/custom/hooks/mysql/post/roundcubefix.sh
+		echo 'Created /usr/local/directadmin/custombuild/custom/hooks/mysql/post/roundcubefix.sh hook';
+	else
+		cp -f -u /admin/storage/config/hooks/mysql/post/roundcubefix.sh /usr/local/directadmin/custombuild/custom/hooks/mysql/post/roundcubefix.sh && echo 'updated /usr/local/directadmin/custombuild/custom/hooks/mysql/post/roundcubefix.sh';
+	fi
+fi
+
+echo
+
+#set email limits
+if [ -d /etc/virtual ]; then
+	echo 2000 > /etc/virtual/limit
+	echo 1000 > /etc/virtual/user_limit
+fi
+
+# change disable_functions line
+if [ ! -f /usr/local/directadmin/custombuild/custom/php_disable_functions ]; then
+	if [ ! -d  /usr/local/directadmin/custombuild/custom ]; then
+		mkdir -p  /usr/local/directadmin/custombuild/custom
+	fi
+	touch /usr/local/directadmin/custombuild/custom/php_disable_functions
+	echo "system,passthru,dl,show_source,posix_kill,posix_mkfifo,posix_getpwuid,posix_setpgid,posix_setsid,posix_setuid,posix_setgid,posix_seteuid,posix_setegid,posix_uname" > /usr/local/directadmin/custombuild/custom/php_disable_functions
+	echo "Created /usr/local/directadmin/custombuild/custom/php_disable_functions";
+fi
+
+echo
+
+#fully prevent the creation of any new Admin account
+/usr/local/directadmin/directadmin set never_commands CMD_ACCOUNT_ADMIN:CMD_API_ACCOUNT_ADMIN restart
+
+echo
+
+# no dovecot on storage systems going forward
+if [ -d /usr/sbin/dovecot ]; then
+	#https://docs.directadmin.com/other-hosting-services/dovecot/customizing-dovecot.html#dovecot-full-text-search-fts-with-fts-xapian
+	#zstd compression for email
+	if [ ! -x /usr/local/bin/zstd ]; then
+		echo 'Building zstd and enabling compression';
+		cd /usr/local/directadmin/custombuild
+		./build zstd
+		./build set mail_compress yes
+		./build dovecot_conf
+	fi
+fi
+
+# fast search support
+# this can cause high load on some systems
+#if [ ! -f /usr/lib/dovecot/lib20_fts_plugin.so ]; then
+#	echo "Enabling fts-xapian";
+#	cd /usr/local/directadmin/custombuild
+#	./build update
+#	./build dovecot
+#	./build fts-xapian
+#fi
+
+echo
+
+#whitelist ips
+wlips='127.0.0.1 192.64.80.218 66.45.233.83 66.45.228.251 174.138.183.218 162.216.115.58 162.220.165.125';
+
+if [ ! -f /usr/local/directadmin/data/admin/ip_whitelist ]; then
+        echo 'Creating /usr/local/directadmin/data/admin/ip_whitelist';
+        touch /usr/local/directadmin/data/admin/ip_whitelist
+fi
+
+echo
+
+for wlip in $wlips; do
+        wlcheck=`grep ^$wlip$ /usr/local/directadmin/data/admin/ip_whitelist`;
+        if [ "$wlcheck" = "$wlip" ]; then
+                echo "$wlip is whitelisted already";
+        else
+                echo "Adding $wlip to /usr/local/directadmin/data/admin/ip_whitelist";
+                echo "${wlip}" >> /usr/local/directadmin/data/admin/ip_whitelist
+        fi
+done
+
+echo
+
+sleep 1s;
+
+# install libtidy for php
+if [ -e /etc/debian_version ]; then
+	if [ ! -d /usr/share/doc/libtidy-dev ]; then
+		apt -y install libtidy-dev
+	fi
+fi
+
+sleep 1s;
+
+#raise conntrack max
+if [ -e /proc/sys/net/nf_conntrack_max ]; then
+	echo 'Conntrack max raised';
+	echo 1024000 > /proc/sys/net/nf_conntrack_max
+fi
+
+#propack fixes
+if [ -x /usr/sbin/unitd ]; then
+	echo 'Detected propack';
+	if [ ! -d /etc/systemd/system/user@.service.d ]; then
+		echo 'Missing /etc/systemd/system/user@.service.d';
+		mkdir -p "/etc/systemd/system/user@.service.d"
+		echo "[Service]" > "/etc/systemd/system/user@.service.d/delegate.conf"
+		echo "Delegate=pids memory cpu io" >> "/etc/systemd/system/user@.service.d/delegate.conf"
+	fi
+	# imapsync is added on propack systems only
+	if [ ! -e /usr/local/bin/imapsync ]; then
+		if [ -x /usr/local/directadmin/custombuild/build ]; then
+			/usr/local/directadmin/custombuild/build update && /usr/local/directadmin/custombuild/build imapsync
+		fi
+	fi
+fi
+
+echo
+
+#clamav rules like whitelist.ign2
+if [ -d /usr/local/share/clamav ]; then
+	if [ -f /admin/whitelist.ign2 ]; then
+		if [ ! -f /usr/local/share/clamav/whitelist.ign2 ]; then
+			cp /admin/whitelist.ign2 /usr/local/share/clamav/whitelist.ign2 && echo 'created /usr/local/share/clamav/whitelist.ign2';
+			chown clamav:clamav /usr/local/share/clamav/whitelist.ign2
+		else
+			cp -f -u /admin/whitelist.ign2 /usr/local/share/clamav/whitelist.ign2 && echo 'updated /usr/local/share/clamav/whitelist.ign2';
+			chown clamav:clamav /usr/local/share/clamav/whitelist.ign2
+		fi
+	fi
+fi
+
+echo
+
+#zfs script check
+if [ -x /usr/sbin/zfs ]; then
+	if [ -L /etc/cron.daily/zfs ]; then
+		echo '/etc/cron.daily/zfs exists';
+	else
+		echo '/etc/cron.daily/zfs is not a symlink';
+		if [ ! -e /etc/cron.daily/zfs ]; then
+			if [ -x /admin/configs/zfs/zfs ]; then
+				ln -s /admin/configs/zfs/zfs /etc/cron.daily/zfs
+			else
+				echo '/admin/configs/zfs/zfs does not exist or is not executable';
+			fi
+		else
+			echo 'ERROR: /etc/cron.daily/zfs exists and is not a symlink what is it?';
+			sleep 5s;
+		fi
+	fi
+else
+	if [ -L /etc/cron.daily/zfs ]; then
+		echo 'ERROR: /etc/cron.daily/zfs exists with out /usr/sbin/zfs';
+		sleep 5s;
+	fi
+fi
+
+echo
+
+#sysctl changes for security
+# bubble wrap only
+if [ -e /etc/debian_version ]; then
+	if [ -f /admin/storage/config/99-int-sysctl.conf ]; then
+		if [ -d /etc/sysctl.d ]; then
+			if [ ! -f /etc/sysctl.d/99-int-sysctl.conf ]; then
+				cp /admin/storage/config/99-int-sysctl.conf /etc/sysctl.d/99-int-sysctl.conf
+				sysctl -p /etc/sysctl.d/99-int-sysctl.conf
+			else
+				cp -u -f /admin/storage/config/99-int-sysctl.conf /etc/sysctl.d/99-int-sysctl.conf && sysctl -p /etc/sysctl.d/99-int-sysctl.conf
+				# temp fix
+				/admin/replace-linux "kernel.unprivileged_userns_clone = 0" "kernel.unprivileged_userns_clone = 1" -- /etc/sysctl.d/99-int-sysctl.conf && sysctl -p
+			fi
+		fi
+	fi
+fi
+
+#nginx unit needs this for now
+if [ -x /usr/sbin/unitd ]; then
+	if [ ! -e /usr/tmp ]; then
+		ln -s /tmp /usr/tmp
+	fi
+
+        # restart unit once a day
+        if [ -x /admin/res ] ; then
+	        /admin/res unit
+        fi
+fi
+
+if [ -d /usr/local/lsws/admin/tmp ]; then
+	echo 'Restarting detached php';
+	touch /usr/local/lsws/admin/tmp/.lsphp_restart.txt
+fi
+
+
+echo
+
+echo 'Running backups for da users and etc';
+rsync --delete --timeout=10000 -a /etc/ /backup/etc/
+rsync --delete --timeout=10000 -a /usr/local/directadmin/data/admin/ /backup/directadmin/admin/
+rsync --delete --timeout=10000 -a /usr/local/directadmin/data/users/ /backup/directadmin/users/
+
+#autofix for directadmin tt 38562 
+if [ -d /home/tmp ]; then
+	chmod 1777 /home/tmp
+fi
+
+# block spam via /etc/virtual/bad_sender_hosts_ip
+# 66.254.0.0/19  	donotreply@mso365.arainc.com BOFH needs to remove 173.225.96.0/20
+# annoying sales staff from linuxmagic
+for range in 104.128.144.0/20 65.39.244.0/24 66.254.0.0/19 185.165.186.2; do
+	if [ -f /etc/virtual/bad_sender_hosts_ip ]; then
+		rcheck=`grep ^${range}$ /etc/virtual/bad_sender_hosts_ip`;
+		if [ "$rcheck" = "" ]; then
+			echo "adding $range to /etc/virtual/bad_sender_hosts_ip";
+			echo $range >> /etc/virtual/bad_sender_hosts_ip
+		fi
+	fi
+done
+
+# if enabled default to awstats disabled
+#https://www.directadmin.com/features.php?id=1935
+isenabled=`/usr/local/directadmin/directadmin c | grep -i ^awstats= | cut -d= -f2`;
+if [ "$isenabled" = "1" ]; then
+	cd /usr/local/directadmin/data/users
+	for myuser in *; do
+		if [ -f $myuser/user.conf ]; then
+			awcheck=`grep -i ^AWSTATS= $myuser/user.conf | cut -d= -f2`;
+			if [ "$awcheck" = "" ]; then
+				echo "$myuser has no awstats settings default to disabled";
+				echo awstats=0 >> $myuser/user.conf
+			#elif [ "$awcheck" = "1" ]; then
+			#	#echo "$myuser has awstats enabled";
+			#elif [ "$awcheck" = "0" ]; then
+			#	#echo "$myuser has awstats disabled";
+			#else
+			#	echo 'Error: logically we should not get here in this if statement';
+			fi
+		fi
+	done
+else
+	echo 'Awstats is not enabled server side';
+fi
+
+if [ -f /etc/default/motd-news ]; then
+	/admin/replace-linux "ENABLED=1" "ENABLED=0" -- /etc/default/motd-news
+fi
+
+if [ "$1" = "fast" ]; then
+	echo 'Skipping mysql system table backup dump on fast run';
+else
+	if [ ! -d /backup/mysql ]; then
+                mkdir -p /backup/mysql
+        fi
+
+        cd /backup/mysql
+        today=`/bin/date +%m-%d-%Y`;
+        mysqldump --skip-extended-insert --single-transaction -u root mysql | gzip --stdout > mysql.sql.${today}.gz
+fi
+
+#  /etc/aliases missing on some servers
+if [ ! -f  /etc/aliases ]; then
+	touch /etc/aliases
+	echo 'created empty  /etc/aliases';
+fi
+
+# this is a litespeed + slow rewrite_confs issue
+# fix log permissions TT 1053850
+if [ -d /var/log/httpd ]; then
+	chmod 711 /var/log/httpd
+	chown apache:apache /var/log/httpd
+	chmod 710 /var/log/httpd/domains
+	chgrp apache /var/log/httpd/domains
+fi
+
+if [ -e /etc/redhat-release ]; then
+	chown root:root /var/log && chmod 755 /var/log
+elif [ /etc/debian_version ]; then	
+	chmod 775 /var/log && chown root:syslog /var/log
+	if [ -f /etc/logrotate.d/wtmp ]; then
+		if [ -f /var/log/wtmp ]; then
+			logrotate -dv --log=/var/log/wtmp -f /etc/logrotate.d/wtmp
+		fi
+	fi
+fi
+
+#set cpu to performance
+if [ -e /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor ]; then
+	echo 'Setting CPU to performance';
+	for CPUFREQ in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do [ -f $CPUFREQ ] || continue; echo -n performance > $CPUFREQ; done
+fi
+
+# removed 3/12/2025
+# I don't think we need this any more on directadmin we just use redit now
+#if [ -x /opt/intershield/usr/memcache.sh ]; then
+#	/opt/intershield/usr/memcache.sh
+#else
+#	echo 'Missing /opt/intershield/usr/memcache.sh';
+#fi
+
+# basic changes over time
+if [ -x /usr/local/bin/da -o -x /usr/bin/da ]; then
+	# this was a bug in directadmin now fixed
+	numcheck=`da config  | grep ^allow_numeric_username= | cut -d= -f2`;
+	if [ "$numcheck" = "1" ]; then
+		echo 'Setting allow_numeric_username to 0';
+		da config-set allow_numeric_username 0 --restart
+	fi
+
+	#/usr/local/directadmin/directadmin set brute_force_log_scanner 0
+	# changed to new setup
+        brutescanner=`da config-get login_keys_notify_on_creation`;
+        if [ "$brutescanner" = "1" ]; then
+                echo 'Setting brute_force_log_scanner to 0';
+                da config-set brute_force_log_scanner 0 --restart
+        fi
+
+
+	# has been reported as spam
+	keynotify=`da config-get login_keys_notify_on_creation`;
+	if [ "$keynotify" = "1" ]; then
+		echo 'Setting login_keys_notify_on_creation to 0';
+		da config-set login_keys_notify_on_creation 0 --restart
+	fi
+
+	#da config-set lost_password 1 --restart
+	resetpass=`da config-get lost_password`;
+        if [ "$resetpass" = "0" ]; then
+                echo 'Setting lost_password to 1';
+                da config-set lost_password 1 --restart
+        fi
+
+	# max dataskq to 20 at a time
+	skcheck=`da config  | grep ^dataskq_max_instances= | cut -d= -f2`;
+	if [ "$skcheck" = "0" -o "$skcheck" = "3" ]; then
+		echo 'Setting dataskq_max_instances to 20';
+		da config-set dataskq_max_instances 20 --restart
+	fi
+
+	# delete message system after 7 days
+	ticketcheck=`da config  | grep ^delete_tickets_days= | cut -d= -f2`;
+	if [ "$ticketcheck" = "0" ]; then
+		echo 'Setting delete_messages_days and delete_tickets_days to 7';
+		da config-set delete_messages_days 7
+		# just going to assume both
+		da config-set delete_tickets_days 7 --restart
+	fi
+else
+	echo 'Missing /usr/local/bin/da';
+fi
+
+if [ -x /admin/upscripts ]; then
+	/admin/upscripts
+fi
+
+# used for wswatch.sh
+if [ -f /etc/rc.d/rc.local ]; then
+	if [ ! -x /etc/rc.d/rc.local ]; then
+		chmod +x /etc/rc.d/rc.local
+	fi
+fi
+
+# disable ticket system
+if [ -f /usr/local/directadmin/data/users/admin/ticket.conf ]; then
+	/admin/replace-linux "active=yes" "active=no" -- /usr/local/directadmin/data/users/admin/ticket.conf
+fi
+
+#fix dovecot sni
+# remove the free domains cd ml ga and tk which have been making too many ssl certs
+if [ -d /etc/dovecot/conf/sni ]; then
+	echo 'Checking dovecot sni';
+        cd /etc/dovecot/conf/sni
+        snicheck=`ls | wc -l`;
+        if [ "$snicheck" -gt "2000" ]; then
+                mkdir -p /backup/sni
+                for sni in `find | egrep ".cf.conf$|.ml.conf$|.ga.conf$|.tk.conf$|.ispot.cc.conf$|.gq.conf$"`; do mv -v -f $sni /backup/sni; done
+                systemctl restart dovecot
+        else
+                echo 'Sni check is under 2000';
+        fi
+fi
+
+# add 48h to kernelcare to delay updates
+if [ -f /etc/sysconfig/kcare/kcare.conf ]; then
+        prefixcheck=`grep ^PREFIX= /etc/sysconfig/kcare/kcare.conf`;
+        if [ "$prefixcheck" = "" ]; then
+                echo 'Adding prefix to /etc/sysconfig/kcare/kcare.conf';
+                echo PREFIX=\"48h\" >> /etc/sysconfig/kcare/kcare.conf
+        fi
+fi
+
+#alt-php updates
+if [ -e /usr/bin/cagefs.server ]; then
+	if [ -e /opt/alt/php74/usr/bin/php ]; then
+		if [ -e /usr/bin/yum ]; then
+			if [ -d /usr/local/directadmin ]; then
+				yum -y groupinstall alt-php
+			fi
+		fi
+	fi
+fi
+
+# change to stable due to bugs
+if [ -x /usr/local/directadmin/scripts/getDA.sh ]; then
+	/usr/local/directadmin/scripts/getDA.sh stable
+fi
+
+# user userdir_access is yes set to no
+# no longer support 12/13/2024 so this can be removed in the future
+if [ -f /usr/local/directadmin/custombuild/options.conf ]; then
+	userdircheck=`grep ^userdir_access= /usr/local/directadmin/custombuild/options.conf  | cut -d= -f2`;
+	if [ "$userdircheck" = "yes" ]; then
+		da build set userdir_access no
+	fi
+fi
+
+# for albert count the number of users in da
+if [ -d /home/quags ]; then
+	if [ -d /usr/local/directadmin/data/users ]; then
+		ls /usr/local/directadmin/data/users | grep admin -vw | wc -l > /home/quags/usercount
+	fi
+fi
+
+if [ -x /usr/bin/chronyc ]; then
+	chronyc -a 'burst 4/4'  
+	chronyc -a makestep
+else
+	echo 'Missing /usr/bin/chronyc for timesync';
+fi
+
+# we want to disable the dynamic motd
+# shows if reboot is needed and a wall of text like load / temp etc
+# for servers with clients logging into ssh this is too much info
+
+if [ -d /usr/local/directadmin ]; then
+	if [ -f /etc/debian_version ]; then
+        	if [ -d /etc/update-motd.d/ ]; then
+                	chmod -x /etc/update-motd.d/*
+               		echo 'Disabled dynamic motd on deb/ubuntu';
+        	fi
+	fi
+fi
+
+#see wiki for ssh key fix
+# this will only run once
+shorty=`hostname -s`;
+if [ ! "$shorty" = "vda5000" ]; then
+        if [ -f /etc/ssh/root -a -f /etc/ssh/tech_cakey.pub ]; then
+                sshkeycheck=`grep ^vda5000$ /etc/ssh/root`;
+                if [ "$sshkeycheck" = "vda5000" ]; then
+                        /admin/replace-linux vda5000 $shorty -- /etc/ssh/root
+                fi
+        fi
+fi
+
+# next cloud fix
+if [[ $shorty =~ ^storage ]]; then
+	if [ -f /admin/storage/config/php/99-nextcloud.ini ]; then
+		if [ -x /usr/sbin/zfs ]; then
+			for phpver in `ls /usr/local/ | grep ^php`; do
+				if [ -d /usr/local/$phpver/lib/php.conf.d ]; then
+					if [ ! -f /usr/local/$phpver/lib/php.conf.d/99-nextcloud.ini ]; then
+						cp -v /admin/storage/config/php/99-nextcloud.ini /usr/local/$phpver/lib/php.conf.d/99-nextcloud.ini
+					else
+						cp -v -f -u /admin/storage/config/php/99-nextcloud.ini /usr/local/$phpver/lib/php.conf.d/99-nextcloud.ini
+					fi
+				fi
+			done
+		fi
+	fi
+else
+	echo 'Skipping php settings for non storage system';
+fi
+
+# a user was very mad they were exceeding limits
+# lets disable notifications because sometimes is backups generating
+if [ -x /usr/sbin/cloudlinux-config ]; then
+	cloudlinux-config set --json --data '{"options":{"faultsNotification":{"notifyCustomers":false}}}'
+fi
+
+# [12/Mar/2025 11:05:14 +0000] [PID 1986293] [ERROR] An error has occurred - Error with system Quotassh: /usr/local/directadmin/bin/setquota: No such file or directoryDebug Guide (Status Code: 500)
+# jb restore showed a quota error that should only be used for zfs
+# check and fix should it reoccir
+if [ -f /etc/redhat-release ]; then
+	repquota=`da config-get repquota`;
+	if [ "$requota" = "/usr/local/directadmin/bin/repquota" ]; then
+		echo 'Fixing requota for rhel systems';
+		da config-set repquota /usr/sbin/repquota --restart
+	fi
+
+	setquota=`da config-get setquota`;
+	if [ "$setquota" = "/usr/local/directadmin/bin/setquota" ]; then
+		echo 'Fixing setquota for rhel systems';
+		da config-set setquota /usr/sbin/setquota --restart
+	fi
+
+	#https://docs.directadmin.com/directadmin/general-usage/disk-usage-bandwidth.html recommended internal default
+	realtime_quota=`da config-get realtime_quota`;
+	if [ "$realtime_quota" = "2" ]; then
+		echo 'Fixing realtime_quota for rhel systems';
+		da config-set realtime_quota 2 --restart
+	fi
+	homequota=`da config-get quota_partition`;
+	if [ "$homequota" = "/home" ]; then
+		echo "fixing quota_partition for rhel";
+		da config-set quota_partition / --restart
+		echo "action=tally&value=all" >> /usr/local/directadmin/data/task.queue
+	fi
+fi
+
+if [ -f /etc/sudoers.d/quags ]; then
+        myhostname=`hostname`;
+        mydate=`date`;
+        logincheck=`cat /var/log/directadmin/login.log | grep "successful login to 'admin'" | egrep -v -f /usr/local/directadmin/data/admin/ip.list| egrep -v "198.96.89.106|216.158.226.14|192.64.80.218|66.45.235.105|66.45.235.226|88.198.109.76|69.10.33.243|106.51.49.165|66.45.233.83|162.220.165.125|66.45.228.251|216.158.239.250|69.10.33.246"`;
+        if [ ! "$logincheck" = "" ]; then
+                echo "${logincheck}" | mail -s "login check on $myhostname at $mydate" john@interserver.net
+        fi
+
+        if [ -d /home/quags ]; then
+                random=`openssl rand -base64 16`;
+                if [ ! "$random" = "" ]; then
+			if [ -x /usr/sbin/usermod ]; then
+				/usr/sbin/usermod --password $random root
+			else
+                        	echo $random | passwd --stdin root
+			fi
+                        echo "random pass set for root";
+			if [ -d /home/admin ]; then
+				random2=`openssl rand -base64 16`;
+				if [ ! "$random2" = "" ]; then
+					echo "random pass set for admin";
+					if [ -x /usr/sbin/usermod ]; then
+						/usr/sbin/usermod --password $random2 admin
+					else
+						echo $random2 | passwd --stdin admin
+					fi
+				fi
+			fi
+                fi
+        fi
+fi
+
+# replace the relay to redundant system
+if [ -f /etc/exim.routers.pre.conf ]; then
+        if [ -x /admin/replace-linux ]; then
+                relay_check=`grep webhosting-mailchannels-outbound.is.cc /etc/exim.routers.pre.conf | tail -n 1 | rev | awk '{print $1}' | rev`;
+                if [ "$relay_check" = "webhosting-mailchannels-outbound.is.cc" ]; then
+                        /admin/replace-linux webhosting-mailchannels-outbound.is.cc webhosting-relay.interserver.net -- /etc/exim.routers.pre.conf && systemctl restart exim
+                else
+                        echo 'No changes needed in /etc/exim.routers.pre.conf';
+                fi
+        else
+                echo 'Missing /admin/replace-linux';
+        fi
+else
+        echo '/etc/exim.routers.pre.conf does not exist';
+fi
+
+if [ -x /usr/sbin/imunify-realtime-av ]; then
+	if [ -x /admin/ml/intcsf ]; then
+		/admin/ml/intcsf
+	fi
+fi
+
+echo 'Done';

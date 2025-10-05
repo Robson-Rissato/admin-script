@@ -1,0 +1,24 @@
+#!/bin/sh
+
+if [ ! -x /usr/bin/sudo ]; then
+	echo 'Install sudo to run forward and reverse check';
+	exit;
+fi
+
+if [ ! -x /usr/bin/dig ]; then
+	echo 'Install dig to run forward and reverse dns check';
+	exit;
+fi
+
+#
+# forward and reverse checks
+#
+hostname=`hostname`;
+echo
+echo 'Testing forward and reverse dns';
+dighost=`sudo -u nobody dig +tries=1 +short $hostname @8.8.8.8`;
+echo "$hostname resolves to $dighost";
+digip=`sudo -u nobody dig +short -x $dighost @8.8.8.8`;
+echo "$dighost resolves back to $digip";
+echo
+

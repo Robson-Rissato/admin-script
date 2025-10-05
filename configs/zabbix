@@ -1,0 +1,101 @@
+#!/bin/bash
+# Zabbix Agent Installer and Configurator v1.0
+# (c)2019 InterServer by detain@interserver.net
+#
+# To run copy/paste this in a terminal:
+#   curl -s zabbix.is.cc|sh
+
+export hub=66.45.240.98;
+# ensure fqdn hostname
+a=$(hostname)
+b=$(hostname -f)
+if [ ${#b} -gt ${#a} ]; then
+  hostname $(hostname -f);
+  echo $(hostname -f) > /etc/hostname;
+fi
+# get external ip address
+unset ip;
+if [ "$(which dig)" != "" ]; then
+  export ip="$(dig +short myip.opendns.com @resolver1.opendns.com)";
+fi;
+for s in ipecho.net/plain icanhazip.com ifconfig.me; do
+  if [ ! -z $ip ] && [ "$(which curl)" != "" ]; then
+    export ip="$(curl -s http://${s})";
+  fi;
+  if [ ! -z $ip ] && [ "$(which wget)" != "" ]; then
+    export ip="$(wget http://${s} -O - -q)";
+  fi;
+done;
+if [ ! -z $ip ] || [ "$(echo "${ip}"|grep "[0-9]*\.[0-9]")" = "" ]; then
+    export ip="$(ifconfig $(ip route list | grep "^default" | sed s#"^default.*dev "#""#g | cut -d" " -f1)  |grep inet |grep -v inet6 | awk "{ print \$2 }" | cut -d: -f2)"
+fi
+if [ -e /etc/csf ]; then
+  csf -a ${hub};
+fi;
+# register server
+export u=http://zabbix.is.cc/register.php?host=$(hostname);
+curl -s $u || wget -q $u
+# kill and remove old zabbix install
+systemctl stop zabbix-agent >/dev/null 2>&1
+service zabbix-agent stop >/dev/null 2>&1
+killall -9 zabbix_agentd >/dev/null 2>&1;
+if [ -e /etc/redhat-release ]; then
+  rpm -e zabbix-agent;
+elif [ -e /etc/apt ]; then
+  apt-get remove --purge -y zabbix-agent;
+fi;
+rm -vrf /usr/local/etc/zabbix_agentd{,.conf} /usr/local/bin/zabbix_{get,sender} /usr/local/sbin/zabbix_agentd /etc/zabbix /var/log/zabbix /run/zabbix;
+userdel -r zabbix;
+# get install file based on distro + version
+if [ -e /etc/redhat-release ]; then
+    if [ $(cat /etc/redhat-release |sed s#"^.* \([0-9][^\. ]*\)[\. ].*$"#"\1"#g) -ge 7 ]; then
+        rpm -Uvh "http://repo.zabbix.com/zabbix/4.0/rhel/7/x86_64/zabbix-release-4.0-1.el7.noarch.rpm"
+    elif [ $(cat /etc/redhat-release |sed s#"^.* \([0-9][^\. ]*\)[\. ].*$"#"\1"#g) -ge 6 ]; then
+        rpm -Uvh "http://repo.zabbix.com/zabbix/4.0/rhel/6/x86_64/zabbix-release-4.0-1.el6.noarch.rpm"
+	else
+		echo "Version Too Low"
+	fi
+    yum install zabbix-agent -y;
+elif [ -e /etc/lsb-release ] && [ "$(grep -i ubuntu /etc/lsb-release)" != "" ]; then
+    . /etc/lsb-release ;
+    if [ $(echo $DISTRIB_RELEASE|cut -d\. -f1) -ge 18 ]; then
+        wget "http://repo.zabbix.com/zabbix/4.0/ubuntu/pool/main/z/zabbix-release/zabbix-release_4.0-2%2Bbionic_all.deb" -O "zabbix-release_4.0-2+bionic_all.deb"
+        dpkg --install "zabbix-release_4.0-2+bionic_all.deb"
+        rm -fv "zabbix-release_4.0-2+bionic_all.deb"
+    elif [ $(echo $DISTRIB_RELEASE|cut -d\. -f1) -ge 16 ]; then
+        wget "http://repo.zabbix.com/zabbix/4.0/ubuntu/pool/main/z/zabbix-release/zabbix-release_4.0-2%2Bxenial_all.deb" -O "zabbix-release_4.0-2+xenial_all.deb"
+        dpkg --install "zabbix-release_4.0-2+xenial_all.deb"
+        rm -fv "zabbix-release_4.0-2+xenial_all.deb"
+    elif [ $(echo $DISTRIB_RELEASE|cut -d\. -f1) -ge 14 ]; then
+        wget "http://repo.zabbix.com/zabbix/4.0/ubuntu/pool/main/z/zabbix-release/zabbix-release_4.0-2%2Btrusty_all.deb" -O "zabbix-release_4.0-2+trusty_all.deb"
+        dpkg --install "zabbix-release_4.0-2+trusty_all.deb"
+        rm -fv "zabbix-release_4.0-2+trusty_all.deb"
+	else
+		echo "Version Too Low"
+	fi
+    apt-get update;
+    apt-get install zabbix-agent
+elif [ -e /etc/debian_version ]; then
+    wget "http://repo.zabbix.com/zabbix/4.0/debian/pool/main/z/zabbix-release/zabbix-release_4.0-2%2Bstretch_all.deb" -O "zabbix-release_4.0-2+stretch_all.deb"
+    dpkg --install "zabbix-release_4.0-2+stretch_all.deb"
+    rm -fv "zabbix-release_4.0-2+stretch_all.deb"
+    apt-get update;
+    apt-get install zabbix-agent
+fi
+chown -R zabbix.zabbix /etc/zabbix /run/zabbix /var/log/zabbix;
+# customize agent install
+for var in EnableRemoteCommands LogRemoteCommands Server ListenPort ListenIP Hostname ServerActive HostnameItem HostMetadataItem; do
+  sed s#"^${var}"#"\#${var}"#g -i /etc/zabbix/zabbix_agentd.conf;
+done
+echo "
+EnableRemoteCommands=1
+LogRemoteCommands=1
+Server=${hub}
+ListenPort=10050
+ListenIP=${ip}
+ServerActive=${hub}
+HostnameItem=system.hostname
+HostMetadataItem=system.uname
+" > /etc/zabbix/zabbix_agentd.d/agent.conf
+# start agent
+systemctl restart zabbix-agent || service zabbix-agent restart;

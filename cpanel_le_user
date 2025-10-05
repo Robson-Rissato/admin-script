@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+
+if [ "$1" = "" ]; then
+	echo 'Usage ./cpanel_le_user username';
+	exit;
+fi
+
+myuser=$1;
+
+if [ ! -d /usr/local/cpanel ]; then
+	echo 'Requires cpanel';
+	exit;
+fi
+
+if [ ! -e /var/cpanel/perl/Cpanel/SSL/ACME.pm ]; then
+	/scripts/install_lets_encrypt_autossl_provider
+fi
+
+if [ -f /var/cpanel/users/$myuser ]; then
+	check=`whmapi1 get_autossl_providers | grep -A 1 "enabled: 1" | grep module_name | awk '{print $2}'`;
+	# change over to LE if needed
+	if [ "$check" = "cPanel" ]; then
+		whmapi1 set_autossl_provider provider=LetsEncrypt x_terms_of_service_accepted=https://letsencrypt.org/documents/LE-SA-v1.4-April-3-2024.pdf
+	fi
+	/usr/local/cpanel/bin/autossl_check --user=$myuser
+else
+	echo 'User does not exist';
+fi

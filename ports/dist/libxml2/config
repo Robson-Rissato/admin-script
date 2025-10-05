@@ -1,0 +1,9 @@
+NAME='libxml2';
+VERSION='2.6.28';
+MD5='ddf3c369964980a238fad0b6ad40532c';
+EXT='tar.gz';
+DEPS='gcc gcc-c++';
+CONFIG='./configure --prefix=/usr';
+MAKE='make';
+MAKEINSTALL='make install';
+LDCONFIG=1

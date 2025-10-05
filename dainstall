@@ -1,0 +1,44 @@
+#!/bin/sh
+
+if [ -e /usr/local/cpanel ]; then
+	echo 'Uhh, cpanel?!';
+	exit;
+fi
+
+if [ ! "$1" = "force" ]; then
+	if [ -e /usr/local/directadmin ]; then
+		echo 'DA already installed';
+		exit;
+	fi
+fi
+
+if [ ! -e /root/setup.sh ]; then
+	echo
+	echo 'Running cd /root && wget http://directadmin.com/setup.sh ';
+	sleep 1s;
+	cd /root && wget http://directadmin.com/setup.sh
+	echo
+fi
+
+if [ -e /etc/redhat-release ]; then
+	yum -y update
+	yum -y install nano libcom_err-devel e2fsprogs-libs e2fsprogs-devel
+	yum -y install wget gcc gcc-c++ flex bison make bind bind-libs bind-utils openssl openssl-devel perl quota libaio libcom_err-devel libcurl-dev gd screen openssl098e
+	yum -y install  keyutils-libs-devel libselinux-devel zlib-devel e2fsprogs-libs libcom_err-devel
+	yum -y install openssl098e
+	yum -y install wget gcc gcc-c++ flex bison make bind bind-libs bind-utils openssl openssl-devel perl quota libaio \
+		libcom_err-devel libcurl-devel gd zlib-devel zip unzip libcap-devel cronie bzip2 cyrus-sasl-devel perl-ExtUtils-Embed \
+		autoconf automake libtool which patch mailx bzip2-devel lsof glibc-headers kernel-devel expat-devel \
+		psmisc net-tools systemd-devel libdb-devel perl-DBI perl-Perl4-CoreLibs perl-libwww-perl xfsprogs rsyslog logrotate crontabs file kernel-headers
+	yum -y install perl-LWP-Protocol-https.noarch
+elif [ -e /etc/debian_version ]; then
+	apt-get update
+	apt-get -y install gcc g++ make flex bison openssl libssl-dev perl perl-base perl-modules libperl-dev libaio1 libaio-dev
+	apt-get -y install gcc g++ make flex bison openssl libssl-dev perl perl-base perl-modules libperl-dev libaio1 libaio-dev zlib1g zlib1g-dev libcap-dev bzip2 automake
+	apt-get -y install pkg-config
+else
+	echo 'Need to add freebsd support, or unsupported os';
+fi
+
+chmod +x /root/setup.sh
+/root/setup.sh

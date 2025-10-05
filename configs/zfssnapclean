@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+
+if [ ! -x /usr/sbin/zfs -a ! -x /sbin/zfs ]; then
+	echo 'zfs not installed';
+	exit;
+fi
+
+echo 'Current snapshots';
+zfs list -t snapshot -o name,creation,space
+
+sleep 1s;
+
+if [ "$1" = "" ]; then
+	echo 'Usage ./zfssnapclean all|1|2|3';
+	exit;
+fi
+
+MYCALL=$1;
+
+function clean_snaps()
+{
+	if [ "$1" = "all" ]; then
+		echo 'Looking for all snapshots';
+		snap_list=`zfs list -t snapshot | grep @ | awk '{print $1}' | egrep -v "pleskinstall|mysql"`;
+	else
+		echo "looking for snapshots @${1}";
+		sleep 1s;
+		snap_list=`zfs list -t snapshot | grep @${1} | awk '{print $1}' | egrep -v "mysql"`;
+	fi
+
+	if [ "$snap_list" = "" ]; then
+		echo 'No snapshots found';
+	else
+		for snap in $snap_list; do
+			zfs destroy ${snap}
+		done
+	fi
+	echo "done"
+	zfs list -t snapshot -o name,creation,space; zpool list; zpool status
+	
+
+}
+
+case "$MYCALL" in
+ all)
+  clean_snaps all
+ ;;
+
+ 1)
+  clean_snaps first
+ ;;
+ 2)
+  clean_snaps second
+ ;;
+
+ 3)
+  clean_snaps third
+ ;;
+
+ *)
+	echo 'Unknown call';
+  ;;
+ esac

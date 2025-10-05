@@ -1,0 +1,21 @@
+#!/bin/sh
+
+if [ "$1" = "" ]; then
+	echo "Usage ./disablemailforuser username";
+	exit;
+
+fi
+
+mailprogs='/usr/sbin/sendmail /usr/sbin/exim'
+user=$1;
+if [ -e /var/cpanel/users/$i ]; then
+	for i in $mailprogs; do
+		echo "Disabling $i for $user";
+		setfacl -m u:$user:---,g:$user:--- $i
+	done	
+        if [ -e /usr/sbin/cagefsctl ]; then
+                /usr/sbin/cagefsctl --force-update
+        fi
+else
+	echo "did not find /var/cpanel/users/$i";
+fi

@@ -1,0 +1,7 @@
+if "${if def:spam_score_int {def}{undef}}" is "def"
+then
+  if ($spam_score_int is above 50)
+  then
+    unseen save /opt/intershield/var/spam/
+  endif
+endif

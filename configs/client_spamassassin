@@ -1,0 +1,9 @@
+#!/bin/bash
+
+if [ -e /usr/local/cpanel ]; then
+	if [ -d /etc/mail/spamassassin ]; then
+		cp /admin/configs/cpanel/INT.cf /etc/mail/spamassassin/INT.cf
+		/admin/configs/cpanel/install_ix
+		/admin/exi spamoutscan
+	fi
+fi

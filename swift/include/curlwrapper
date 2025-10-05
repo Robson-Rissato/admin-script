@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+
+running_dir=$(dirname $0);
+
+if [ ! -f ${running_dir}/../swift.include ]; then
+        echo 'Missing swift.include file';
+        exit;
+fi
+
+. ${running_dir}/../swift.include
+
+if [ -f ${running_dir}/../swift.kludge ]; then
+	. ${running_dir}/../swift.kludge
+fi
+
+if [ "$WRCONTAINER" = "" ]; then
+        echo 'No container sent';
+        exit 1;
+fi
+
+if [ "$FILE" = "" ]; then
+        echo 'No File variable sent';
+        exit 1;
+fi
+
+if [ "$WRREALFILE" = "" ]; then
+        echo 'No Realfile variable sent';
+        exit 1;
+fi
+
+if [ "$KEY" = "" ]; then
+        echo 'No APIKEY variable sent';
+        exit 1;
+fi
+
+if [ "$STORAGE_URL" = "" ]; then
+        echo 'No storage_url variable sent';
+        exit 1;
+fi
+
+if [ $# -eq 0 ]; then
+	# we may not want to gzip zfs
+        # initial zstd support
+        # both support --fast - not on ubuntu18
+        # both support -c to stdout
+        if [ -x /usr/bin/zstd ]; then
+ 	        /usr/bin/zstd -3 -c | ${curl} -o/dev/null -f -X PUT -T - -H "X-Auth-Token: ${KEY}" "${STORAGE_URL}/${WRCONTAINER}/${WRREALFILE}/split-${FILE}"
+        else
+		${gzip} --fast -c | ${curl} -o/dev/null -f -X PUT -T - -H "X-Auth-Token: ${KEY}" "${STORAGE_URL}/${WRCONTAINER}/${WRREALFILE}/split-${FILE}"
+	fi
+else
+        echo "exiting no data sent";
+        exit 1;
+fi
+
+echo "done on $FILE upload to $WRCONTAINER";
+echo "";

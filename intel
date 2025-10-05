@@ -1,0 +1,125 @@
+#!/bin/bash
+
+#add cloudlinux and openvz checks as they become available
+if [ -e /etc/redhat-release ]; then
+        ver=`cat /etc/redhat-release  | awk '{print $3}'`;
+        if [ "$ver" = "release" ]; then
+                ver=`cat /etc/redhat-release  | awk '{print $4}' | cut -d. -f1-2`;
+        fi
+        kernel=`uname -r`;
+        echo "$ver $kernel";
+
+	if [ -e /usr/sbin/lvectl ]; then
+		# cloudlinux
+		if [ "$ver" = "7.4" ]; then
+			if [ "$kernel" = "3.10.0-714.10.2.lve1.4.79.el7.x86_64" ]; then
+				echo "cloudlinux is safe";
+				exit;
+			elif [ -f "/boot/vmlinuz-3.10.0-714.10.2.lve1.4.79.el7.x86_64" ]; then
+				echo "cloudlinux has kernel but requires a reboot";
+			else
+				echo "Running yum update";
+				yum clean all && yum -y update linux-firmware microcode_ctl && yum -y install kernel-3.10.0-714.10.2.lve1.4.79.el7
+				if [ -f /boot/efi/EFI/centos/grub.cfg ]; then
+					grub2-mkconfig -o /boot/efi/EFI/centos/grub.cfg
+				fi
+		fi
+		elif [ "$ver" = "6.9" ]; then
+			if [ "$kernel" = "2.6.32-896.16.1.lve1.4.49.el6.x86_64" ]; then
+				echo "cl6 is safe";
+				exit;
+			elif [ -f "/boot/vmlinuz-2.6.32-896.16.1.lve1.4.49.el6.x86_64" ]; then
+				echo "cloudlinux6 has kernel but requires a reboot";
+			else
+				yum clean all && yum -y update kernel-firmware && yum -y install kernel-2.6.32-896.16.1.lve1.4.49.el6
+			fi
+		else
+			echo "Cloudlinux unknown os";
+			exit;
+		fi
+	elif [ -e /usr/bin/prlctl ]; then
+		# add in code when needed
+		if [ "$kernel" = "3.10.0-693.11.6.vz7.40.4" ]; then
+			echo "openvz7 safe";
+			exit;
+		elif [ -f /boot/vmlinuz-3.10.0-693.11.6.vz7.40.4 ]; then
+			echo "openvz7 is safe but needs a reboot"
+		else
+			yum clean all && yum -y update
+			if [ ! -e /boot/vmlinuz-3.10.0-693.11.6.vz7.40.4 ]; then
+				yum -y install http://mirror.trouble-free.net/openvz/virtuozzo/releases/openvz-7.0.6-509/x86_64/os/Packages/v/vzkernel-3.10.0-693.11.6.vz7.40.4.x86_64.rpm
+			fi
+			echo 
+			echo "Disable factory repo";
+			sleep 1s;
+			echo
+		fi
+	elif [ -e /usr/sbin/vzctl ]; then
+		#2.6.32-042stab127.2
+		if [ "$kernel" = "2.6.32-042stab127.2" ]; then
+			echo "openvz6 safe";
+			exit;
+		elif [ -f /boot/vmlinuz-2.6.32-042stab127.2 ]; then
+			echo "openvz6 is safe but needs a reboot";
+		else
+			yum clean all && yum -y update
+		fi
+	else
+	        if [ "$ver" = "6.9" ]; then
+	                if [ "$kernel" = "2.6.32-696.18.7.el6.x86_64" ]; then
+               		        echo "centos6 safe";
+                       		exit;
+               		elif [ -f /boot/vmlinuz-2.6.32-696.18.7.el6.x86_64 ]; then
+                       		echo "has kernel but needs reboot";
+               		else
+          			echo "needs yum update and reboot"; yum clean all; yum -y update;
+			fi
+               	elif [ "$ver" = "7.4" ]; then
+                	if [ "$kernel" = "3.10.0-693.11.6.el7.x86_64" ]; then
+       	                	echo "centos7 safe";
+				exit;
+               		elif [ -f /boot/vmlinuz-3.10.0-693.11.6.el7.x86_64 ]; then
+                       		echo "has kernel but needs reboot";
+               		else
+                       		echo "needs yum update and reboot"; yum clean all; yum -y update;
+               		fi
+		else
+			echo "unknown os";
+		fi
+		if [ -e	/usr/bin/virsh ]; then
+                      for i in `virsh list | grep running$ | awk '{print $2}'`; do virsh autostart $i; done
+			if [ -e /etc/sysconfig/libvirt-guests ]; then
+				/admin/replace-linux \#ON_SHUTDOWN=suspend ON_SHUTDOWN=suspend -- /etc/sysconfig/libvirt-guests
+				/admin/replace-linux \#ON_BOOT=start ON_BOOT=start -- /etc/sysconfig/libvirt-guests
+			fi
+                fi
+	fi
+elif [ -e /etc/debian_version ]; then
+        if [ -x /admin/upgradedebs ]; then
+		apt-get auto-remove
+                /admin/upgradedebs
+		exit;
+        else
+                echo "run apt update";
+        fi
+else
+        echo "unknown os";
+	exit;
+fi
+
+
+if [ "$1" = "r" ]; then
+	touch /fastboot; touch /dev/shm/lock; reboot
+	exit;
+fi
+
+echo "Updates ran? Ok to run again";
+echo "recommended to set random password";
+echo
+echo
+df -m | grep /$
+echo
+echo "If / has under 15G free, free up space";
+echo
+echo "touch /fastboot; touch /dev/shm/lock; reboot";
+

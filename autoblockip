@@ -1,0 +1,152 @@
+#!/bin/bash
+
+# John Quaglieri
+# john@interserver.net
+
+ #-
+ # Copyright (c) 2006 InterServer, Inc.
+ # All rights reserved.
+ #
+ # Redistribution and use in source and binary forms, with or without
+ # modification, are permitted provided that the following conditions
+ # are met:
+ # 1. Redistributions of source code must retain the above copyright
+ #    notice, this list of conditions and the following disclaimer.
+ # 2. Redistributions in binary form must reproduce the above copyright
+ #    notice, this list of conditions and the following disclaimer in the
+ #    documentation and/or other materials provided with the distribution.
+ # 3. All advertising materials mentioning features or use of this software
+ #    must display the following acknowledgement:
+ #        This product includes software developed by InterServer, Inc and
+ #        its contributors.
+ # 4. Neither the name of InterServer, Inc nor the names of its
+ #    contributors may be used to endorse or promote products derived
+ #    from this software without specific prior written permission.
+ #
+ # THIS SOFTWARE IS PROVIDED BY INTERSERVER, INC. AND CONTRIBUTORS
+ # ``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
+ # TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ # PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE COMPANY OR CONTRIBUTORS
+ # BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ # CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ # SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ # INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ # CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ # ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ # POSSIBILITY OF SUCH DAMAGE.
+ #/
+
+
+# quick usage
+# /admin/.info/autoblock_email_enable enable email
+# exclude file - /admin/.info/exclude
+# use - autoblockip -r 150 -l (block 150 connections with logging)
+# /admin/.info/range_exclude can be used to exclude ranges
+
+debug=1
+
+# switch to turn off debug (1)
+if [ "$1" = "-r" ]; then
+        debug=0
+	
+	# lock file
+	if [ ! -e /root/tmp/autoblock.pid ]; then
+        	touch /root/tmp/autoblock.pid
+        	echo $$ > /root/tmp/autoblock.pid
+	else
+        	sitepid=`cat /root/tmp/autoblock.pid`;
+        	if [ -e /proc/$sitepid ]; then
+                	echo 'alreading running, exiting';
+                	exit
+        	else
+                	echo 'Stale pid file';
+        	fi
+	fi
+
+fi
+
+# switch to enable max connections (2)
+if [ ! "$2" = "" ]; then
+        def=$2;
+else
+        def=75;
+fi
+
+# switch to enable logging (3)
+log=0
+if [ "$3" = "-l" ]; then
+	log=1;
+fi
+
+# logging information
+if [ "$log" = "1" ]; then
+	LOGFILE=/var/log/autoblock;
+	if [ -e /var/log ]; then
+		if [ ! -e $LOGFILE ]; then
+			touch $LOGFILE
+			chmod 600 $LOGFILE
+		fi
+		DATE=`/bin/date`;
+	else
+		echo 'Logging failed (create /var/log)';
+	fi
+
+fi
+
+mainip=`/admin/getmainip`;
+DOEMAIL=0;
+
+if [ -e /admin/.info/autoblock_email_enable ]; then
+	DOEMAIL=1;
+	CONTACT=`/admin/getcontact`;
+	HOSTNAME=`/bin/hostname`;
+fi
+
+touch /admin/.info/range_exclude
+for i in $(/admin/showallipconnection | egrep -v "127.0.0.1|66.45.228|66.45.230.130|$mainip" | grep -v -f /admin/.info/range_exclude | awk '{print $1 ":" $2}'); do
+        # connections
+	f=$(echo $i | cut -d: -f1)
+	# ips
+        s=$(echo $i | cut -d: -f2)
+	
+	# trim variables
+	printf "%s\n" "$s" | { read -r s; s=$(echo "$s"); }
+        ignore=0;
+
+	if [ $f -gt $def ]; then
+        	# add exclude list
+        	if [ -e /admin/.info/exclude ]; then
+                	for j in `cat /admin/.info/exclude`; do
+				# trim $j variable as well
+				printf "%s\n" "$j" | { read -r j; j=$(echo "$j"); }			
+                        
+				if [ "$j" = "$s" ]; then
+                                	ignore=1;
+                                	echo "$s is in allow list";
+					if [ "$log" = 1 ]; then
+                                        	echo "$DATE - ALLOW LIST: $s with $f connections" >> $LOGFILE
+                                	fi
+                        	fi
+                	done
+        	fi
+
+        	if [ "$ignore" = "0" ]; then
+                        if [ "$debug" = "0" ]; then
+                                /admin/blockip $s
+				if [ "$log" = 1 ]; then
+					echo "$DATE - BLOCKED: $s with $f connections" >> $LOGFILE
+					# send email
+					if [ "$DOEMAIL" = "1" ]; then
+						echo "$DATE - BLOCKED: $s with $f connections" | mail -s "$HOSTNAME - Blocked $s" $CONTACT
+					fi
+				fi
+                        else
+                                echo "$s - $f connections"
+                        fi
+                fi
+        fi
+done
+
+if [ -e /root/tmp/autoblock.pid ]; then
+	/bin/rm  /root/tmp/autoblock.pid
+fi

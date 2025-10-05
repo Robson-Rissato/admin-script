@@ -1,0 +1,51 @@
+#!/bin/sh
+
+# /************************************************************************************\
+# * Trouble Free Admin Center                                                          *
+# * (c)2002 Interserver.net                                                            *
+# * ---------------------------------------------------------------------------------- *
+# * Description: Install memtest (ram check)                                           *
+# \************************************************************************************/
+
+
+# 72789a40fa4737d6c4b8f81e56bbb450  memtest86420.bin
+
+if [ ! -e /etc/redhat-release ]; then
+	echo 'Requires redhat';	
+	exit;
+fi
+
+if [ ! -e /sbin/grub ]; then
+	echo 'Needs grub';
+	exit;
+fi
+
+if [ -e /root/tmp/memtest86420.bin ]; then
+        /bin/rm /root/tmp/memtest86420.bin
+fi
+
+/admin/getpackage /sources/memtest86420.bin
+
+check=$(/admin/checkmd5 72789a40fa4737d6c4b8f81e56bbb450 memtest86420.bin)
+if [ "$check" = "0" ]; then
+
+	if [ -e /boot/memtest86420.bin ]; then
+		/bin/rm /boot/memtest86420.bin
+	fi
+
+	mv /root/tmp/memtest86420.bin /boot
+
+echo 'Add this to grub'
+
+echo -e '\n
+title Memtest86
+root (hd0,0)
+kernel /memtest86420.bin 
+'
+
+else
+	
+	echo 'MD5 did not match';
+	/bin/rm /root/tmp/memtest86420.bin
+fi
+

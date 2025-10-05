@@ -1,0 +1,55 @@
+#/usr/local/cpanel/3rdparty/bin/sa-update -D; /usr/local/cpanel/3rdparty/bin/sa-compile; cagefsctl --force-update; /scripts/restartsrv_spamd; /scripts/restartsrv_exim
+
+# spammy networks and uceprotect combined
+header   INTERSERVER_RULE_SPAMMY_NETWORK rbleval:check_rbl('int', 'rblspamassassin.interserver.net.')
+describe INTERSERVER_RULE_SPAMMY_NETWORK In Spammy Network RBL added 3.5 to score
+tflags   INTERSERVER_RULE_SPAMMY_NETWORK net
+score    INTERSERVER_RULE_SPAMMY_NETWORK 3.5
+#end spammynetworks
+
+# int domain blocklist
+urirhssub INTERSERVER_RULE_URIBL_RBLINT rbluri.interserver.net. A 127.0.0.2
+body INTERSERVER_RULE_URIBL_RBLINT eval:check_uridnsbl('URIBL_RBLINT')
+describe INTERSERVER_RULE_URIBL_RBLINT Contains a URL listed in the uribl at sigs.interserver.net
+tflags INTERSERVER_RULE_URIBL_RBLINT net
+score INTERSERVER_RULE_URIBL_RBLINT 4.0
+# end int uri
+
+# SEM-URI
+urirhssub SEM_URI uribl.spameatingmonkey.net. A 2
+body SEM_URI eval:check_uridnsbl('SEM_URI')
+describe SEM_URI Contains a URI listed by SEM-URI
+tflags SEM_URI net
+score SEM_URI 2.0
+# end sem uri
+
+# SEM-FRESH
+urirhssub SEM_FRESH fresh.spameatingmonkey.net. A 2
+body SEM_FRESH eval:check_uridnsbl('SEM_FRESH')
+describe SEM_FRESH Contains a domain registered less than 5 days ago
+tflags SEM_FRESH net
+score SEM_FRESH 1.0
+# end semfresh
+
+#wl
+header   INTERSERVER_RULE_GOOD_NETWORK rbleval:check_rbl('int', 'goodrbl.interserver.net.')
+describe INTERSERVER_RULE_GOOD_NETWORK Good or wellknown network decrease score by 2.1
+tflags   INTERSERVER_RULE_GOOD_NETWORK net
+score    INTERSERVER_RULE_GOOD_NETWORK -2.1
+#end wl
+
+#invaliement uri
+urirhssub URIBL_IVMURI uri.invaluement.interserver.net. A 2
+body URIBL_IVMURI eval:check_uridnsbl('URIBL_IVMURI')
+describe URIBL_IVMURI listed on ivmURI found at invaluement.com
+tflags URIBL_IVMURI net
+score URIBL_IVMURI 2.0
+reuse URIBL_IVMURI
+# end invaliement uri
+
+#invalument sip24 and sip
+header RCVD_IN_IVMSIP_SIP24 eval:check_rbl('ivmSIP_SIP24-lastexternal', 'sip-sip24.invaluement.interserver.net.') 
+describe RCVD_IN_IVMSIP_SIP24 listed on ivmSIP and/or ivmSIP24 found at invaluement.com 
+tflags RCVD_IN_IVMSIP_SIP24 net
+score RCVD_IN_IVMSIP_SIP24		2.0
+#end invalument sip24 and sip

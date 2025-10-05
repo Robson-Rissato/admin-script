@@ -1,0 +1,11 @@
+#!/bin/bash
+
+if [ -e /var/cpanel/users ]; then
+	cd /var/cpanel/users
+	/admin/replace-linux HASCGI=1 HASCGI=0 -- *
+	/usr/local/cpanel/bin/build_apache_conf
+	/admin/res httpd
+	echo 'Done';
+else
+	echo 'No cpanel?';
+fi

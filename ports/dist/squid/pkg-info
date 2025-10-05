@@ -1,0 +1,7 @@
+You may want to restart squid (if its running) as follows:
+
+
+/usr/local/squid/sbin/squid -k shutdown ; sleep 15s; killall -9 squid; sleep 1s; /usr/local/squid/sbin/squid
+
+
+

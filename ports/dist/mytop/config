@@ -1,0 +1,8 @@
+NAME='mytop';
+VERSION='1.6';
+MD5='4127c3e486eb664fed60f40849372a9f';
+EXT='tar.gz';
+DEPS='';
+CONFIG='/admin/mytop && perl Makefile.PL';
+MAKE='make';
+MAKEINSTALL='make install';

@@ -1,0 +1,11 @@
+--- /home/zone/zone-mta-template/./node_modules/zone-mta/lib/sender.js~ 2022-07-18 16:51:05.863459000 -0400
++++ /home/zone/zone-mta-template/./node_modules/zone-mta/lib/sender.js  2022-07-24 00:02:42.683818000 -0400
+@@ -648,7 +648,7 @@
+         if (bounce.category === 'blacklist' && (delivery.poolDisabled || !envelopeFrom)) {
+             // blacklisted IP
+             // no available IP addresses left or its a bounce message, give up delivering it
+-            bounce.action = 'reject';
++            bounce.action = 'defer';
+         }
+
+         if (bounce.action !== 'reject' && deferredCount < ttlMinutes.length) {

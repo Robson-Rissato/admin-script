@@ -1,0 +1,115 @@
+#!/bin/bash
+
+# This script started as a way to start logging scripts ending in .suspected.
+# But as time moved on more file types came along like favico, so now the script
+# handles many different types of files
+
+# Originally by John Quaglieri <john@interserver.net>
+
+# merge two fav icos into one function
+
+if [ ! -x /usr/bin/locate ]; then
+	echo 'No Locate';
+	exit;
+fi
+
+if [ -f /admin/.swift/config ]; then
+	echo 'Does not appear to be a server this should run on';	
+	exit;
+fi
+
+
+cp -u /admin/ml/updatedb.conf /etc/updatedb.conf
+
+if [ "$1" = "f" ]; then
+	echo 'Fast run';
+else
+	if [ -x /usr/bin/bc ]; then
+		RAN=`echo $RANDOM % 100 | bc`;
+	else
+		RAN=120;
+	fi
+	echo "sleeping $RAN";
+	sleep $RAN
+fi
+
+echo 'Finding all suspected php files in 2 seconds';
+sleep 2s;
+
+SAVEIFS=$IFS
+IFS=$(echo -en "\n\b")
+
+export NOUPDATE=1;
+export NOMAIL=1
+
+for file in $(locate php.suspected | grep .php.suspected$ | grep ^/home | egrep -v ".quarentine|.trash|quarantine_clamavconnector"); do
+	if [ -f "$file" ]; then
+		echo "Found ${file}";
+        	/admin/ml/send "${file}"
+		/admin/scanner/clamscanrun.sh "${file}"
+	fi
+done
+
+echo 'Favico';
+for file2 in $(locate -ir 'favicon_[A-Za-z0-9\/\ ]*.ico$' | grep ^/home | egrep -v ".quarentine|.trash|quarantine_clamavconnector"); do
+	if [ -f "$file2" ]; then
+		echo "Found and testing Testing ${file2}";
+		phptest=$(file -b "${file2}" | grep "^PHP");
+		if [ ! "$phptest" = "" ]; then
+			echo '	PHP file found';
+			/admin/ml/send "${file2}"
+			/admin/scanner/clamscanrun.sh "${file2}"
+		else
+			echo '	not PHP';
+		fi
+		echo
+	fi
+done
+
+#.wellknown
+echo '.Well-known';
+for file3 in $(locate .well-known | grep .php$ | grep ^/home | egrep -v ".quarentine|.trash|quarantine_clamavconnector"); do
+	if [ -f "${file3}" ]; then
+		echo "Found ${file3}";
+        	/admin/ml/send "${file3}"
+		/admin/scanner/clamscanrun.sh "${file3}"
+	fi
+
+done
+
+# new fav
+for file5 in $(locate -ir '/\.[A-Za-z0-9\/\ ]*.ico$' | grep ^/home | egrep -v ".quarentine|.trash|quarantine_clamavconnector"); do
+        if [ -f "$file5" ]; then
+                echo "Found and testing Testing ${file5}";
+                phptest=$(file -b "${file5}" | grep "^PHP");
+                if [ ! "$phptest" = "" ]; then
+                        echo '  PHP file found';
+                        /admin/ml/send "${file5}"
+                        /admin/scanner/clamscanrun.sh "${file5}"
+                else
+                        echo '  not PHP';
+                fi
+                echo
+        fi
+done
+
+
+#locate /post_controller.php
+for searchfiles in wp-vcd.php wp-tmp.php post_controller.php wp-conns.php hon2our.php wp-cods.php wp-sbb.php wp-pols.php w7388n.php szalog.php myshe.php readmy.php rnnvhs.php class.wp-times.php tmp.php p453536.php common_config.php system_m.php engine_functions.php Marvins.php dsfghs.php h4ck_.php Camilles.php ws0.php 00.php 9nEmiV.php wso.php c99shell.php wp-misc.php; do
+	echo "checking for ${searchfiles}"
+	for file4 in $(locate -ir "/${searchfiles}$" | grep ^/home | egrep -v ".quarentine|.trash|quarantine_clamavconnector"); do
+        	if [ -f "${file4}" ]; then
+			echo "Found ${file4}";
+                	/admin/ml/send "${file4}"
+                	/admin/scanner/clamscanrun.sh "${file4}"
+        	fi
+	done
+done
+
+
+
+
+IFS=$SAVEIFS
+
+#/admin/beta/scanner/cleanscanlog
+/admin/ml/scanlogtxt y

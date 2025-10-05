@@ -1,0 +1,8 @@
+NAME='smartmontools';
+VERSION='6.2';
+MD5='d44f84081a12cef79cd17f78044351fc';
+EXT='tar.gz';
+DEPS='gcc gcc-c++ openssl-devel';
+CONFIG='./configure --prefix=/opt/smart';
+MAKE='make';
+MAKEINSTALL='make install';

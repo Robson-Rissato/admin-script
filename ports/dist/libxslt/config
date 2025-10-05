@@ -1,0 +1,9 @@
+NAME='libxslt';
+VERSION='1.1.20';
+MD5='4ea2dc22a23bf2aa570f868aa86357f8';
+EXT='tar.gz';
+DEPS='gcc gcc-c++';
+CONFIG='./configure --prefix=/usr';
+MAKE='make';
+MAKEINSTALL='make install';
+LDCONFIG=1

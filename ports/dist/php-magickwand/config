@@ -1,0 +1,10 @@
+NAME='php';
+VERSION='4.4.6';
+MD5='07c607fcf12435f0078d72fe0de4e3c0';
+EXT='tar.gz';
+DEPS='gcc gcc-c++ patch /usr/local/bin/convert:imagemagick';
+CONFIG='/admin/getphpconfigline --magick > sh && sh sh';
+MAKE='make';
+MAKEINSTALL='make install';
+FILES='/usr/local/bin/php /usr/bin/php /admin/getphpconfigline /usr/local/apache/bin/apxs';
+PATCH='p1:php-4.4.6-magickwand.patch:c0865c1bd75f66b5cad60505a30bcd8a';

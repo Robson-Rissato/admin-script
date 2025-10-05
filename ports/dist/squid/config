@@ -1,0 +1,8 @@
+NAME='squid';
+VERSION='2.6.STABLE17';
+MD5='f3e5c7721d9f8d8f25ecb337f6f88b73';
+EXT='tar.gz';
+DEPS='gcc gcc-c++';
+CONFIG='./configure --prefix=/usr/local/squid --enable-async-io --with-pthreads --enable-async-io=50 --enable-dlmalloc --enable-epoll --disable-linux-tproxy';
+MAKE='make';
+MAKEINSTALL='make install';

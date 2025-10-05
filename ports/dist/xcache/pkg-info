@@ -1,0 +1,44 @@
+An example php.ini config
+
+
+
+[xcache-common]
+zend_extension_ts = /usr/local/lib/php/extensions/no-debug-zts-20060613/xcache.so
+
+[xcache.admin]
+xcache.admin.auth = On
+xcache.admin.user = "mOo"
+xcache.admin.pass = "f496d77d45447f26af2a27566359702d"
+
+[xcache]
+
+xcache.shm_scheme =        "mmap"
+xcache.size  =                0M
+xcache.count =                 1
+xcache.slots =                8K
+xcache.ttl   =                 0
+xcache.gc_interval =           0
+
+xcache.var_size  =            0M
+xcache.var_count =             1
+xcache.var_slots =            8K
+xcache.var_ttl   =             0
+xcache.var_maxttl   =          0
+xcache.var_gc_interval =     300
+
+xcache.test =                Off
+xcache.readonly_protection = Off
+xcache.mmap_path =    "/dev/zero"
+
+
+xcache.coredump_directory =   ""
+
+xcache.cacher =               On
+xcache.stat   =               On
+xcache.optimizer =           Off
+
+[xcache.coverager]
+xcache.coverager =          Off
+
+xcache.coveragedump_directory = ""
+

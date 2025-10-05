@@ -1,0 +1,13 @@
+#!/bin/bash
+
+if [ ! -f /usr/local/emps/bin/php ]; then
+	echo 'Missing /usr/local/emps/bin/php';
+	exit;
+fi
+
+if [ "$1" = "" ]; then
+	echo 'Usage ./letsencrypt domain.com';
+	exit;
+fi
+
+/usr/local/emps/bin/php /usr/local/webuzo/cli.php --lets_encrypt --action=install --domain=$1

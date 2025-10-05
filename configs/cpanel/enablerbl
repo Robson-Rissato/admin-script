@@ -1,0 +1,74 @@
+#!/bin/bash
+
+# set up whm rbls automatically
+
+if [ ! -d /usr/local/cpanel ]; then
+	echo 'Requires cpanel';
+	exit;
+fi
+
+if [ ! -f /etc/exim.conf.localopts ]; then
+	echo 'requries /etc/exim.conf.localopts';
+	exit;
+fi
+
+if [ ! -x /scripts/buildeximconf ]; then
+	echo 'Requires /scripts/buildeximconf';
+	exit;
+fi
+
+if [ ! -d /var/cpanel ]; then
+	echo 'Requires /var/cpanel';
+	exit;
+fi
+
+check_config()
+{
+	if [ "$1" = "" ]; then
+		echo 'Send blank info to check config';
+		return;
+	fi
+
+	check=$(grep ^${1}$ /etc/exim.conf.localopts);
+	if [ "$check" = "${1}" ]; then
+		echo "${1} is already set in config";
+	else
+		check2=$(echo ${1} | cut -d= -f1);
+		echo "Checking for $check2";
+		anothercheck=$(grep ^${check2}= /etc/exim.conf.localopts);
+		if [ "$anothercheck" = "" ]; then
+			echo "Adding ${1}";
+			echo "${1}" >> /etc/exim.conf.localopts
+		else
+			echo "A config needs to be disabled first $anothercheck";
+		fi
+	fi
+
+}
+
+if [ ! -d /var/cpanel/rbl_info ]; then
+	mkdir -p /var/cpanel/rbl_info
+fi
+
+for rbl in interserver.yaml barracuda.yaml invalument.yaml; do
+	if [ ! -f /var/cpanel/rbl_info/${rbl} ]; then
+		/bin/cp -v /admin/configs/cpanel/${rbl} /var/cpanel/rbl_info/${rbl}
+	fi
+done
+
+# remove spamhaus because it doesn't work on google public dns
+if [ "$(grep ^acl_spamhaus_rbl=1$ /etc/exim.conf.localopts)" = "acl_spamhaus_rbl=1" ]; then
+	replace acl_spamhaus_rbl=1 acl_spamhaus_rbl=0 -- /etc/exim.conf.localopts
+fi
+
+if [ "$(grep ^acl_spamhaus_spamcop_rbl=1$ /etc/exim.conf.localopts)" = "acl_spamhaus_spamcop_rbl=1" ]; then
+        replace acl_spamhaus_spamcop_rbl=1 acl_spamhaus_spamcop_rbl=0 -- /etc/exim.conf.localopts
+fi
+
+
+for config in acl_interserver_rbl=1 acl_barracuda_rbl=1 acl_invalument_rbl=1; do
+	check_config $config
+done
+
+/scripts/buildeximconf
+

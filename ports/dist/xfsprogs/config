@@ -1,0 +1,10 @@
+#d2f981b1ae9348405a331b4c33a08cab  xfsprogs-3.0.5.tar.gz
+NAME='xfsprogs';
+VERSION='3.0.5';
+MD5='d2f981b1ae9348405a331b4c33a08cab';
+EXT='tar.gz';
+DEPS='gcc gcc-c++ libtool';
+CONFIG='./configure';
+DIRNAME='xfsprogs-3.0.5';
+MAKE='make';
+MAKEINSTALL='make install';

@@ -1,0 +1,244 @@
+#!/usr/bin/env bash
+
+# Last modified 12/22/2024
+# this is used with system status probe and other scripts
+# it gives a nice output of ram / disk / versions and other basic system checks
+
+function getram()
+{
+	totalram=`free -g | grep Mem: | awk '{print $2}'`;
+        echo "Ram: $totalram G";
+
+	swap_total=$(free | awk '/^Swap:/ {print $2}')
+	swap_used=$(free | awk '/^Swap:/ {print $3}')
+
+	# Check if swap space is all used
+	if [[ "$swap_total" -gt 0 && "$swap_total" -eq "$swap_used" ]]; then
+    		echo "All swap space is used. Total: $swap_total kB, Used: $swap_used kB"
+	elif [[ "$swap_total" -eq 0 ]]; then
+    		echo "No swap space configured."
+	else
+    	echo "Swap Total: $swap_total kB, Used: $swap_used kB"
+	fi
+}
+
+echo
+echo 'Starting os Checks';
+echo
+
+if [ -f /admin/includes/common_bash_functions ]; then
+	source /admin/includes/common_bash_functions
+fi
+
+if [ -x /admin/systemstats ]; then
+	if [ ! -f /etc/master.passwd ]; then
+		getram
+	fi
+	/admin/systemstats
+
+	# check centos version and if it is not a number skip it (newer version may not have the same spot)
+	# this prevents a bash error
+	if [ -f /etc/redhat-release ]; then
+		centversion=`cat /etc/redhat-release | cut -d" " -f3 | cut -d. -f1`;
+		re='^[0-9]+$'
+		if [[ $centversion =~ $re ]] ; then
+	        	if [ "$centversion" = "6" -o "$centversion" = "5" -o "$centversion" = "3" ]; then
+	        		echo " * ${cyan}WARNING${normal} OS is end of life";
+		        	dosleep;
+			elif [ "$centversion" = "7" ]; then
+				echo " * ${cyan}NOTE${normal} CentOS 7 end of life is June 2024";
+        		fi
+		fi
+	fi
+else
+	if [ -f /etc/redhat-release ]; then
+        	cat /etc/redhat-release
+	elif [ -f /etc/master.passwd ]; then
+		uname -v
+	elif [ -e /usr/bin/lsb_release ]; then
+        	/usr/bin/lsb_release -d -s
+	else
+        	echo 'DetectOS did not find the os';
+	fi
+
+	if [ -x /usr/bin/uptime ]; then
+		if [ -f /etc/master.passwd ]; then
+			/usr/bin/uptime
+		else
+			/usr/bin/uptime -p
+			getram
+		fi
+	fi
+fi
+dosleep;
+
+if [ -x /usr/sbin/ip ]; then
+	echo
+	echo 'IPs detected';
+	ip addr | grep inet | egrep -v "inet6|127.0.0.1" | awk '{print $2}'
+
+	ipv6=`ip addr | grep /64 | grep -v fe80`;
+	if [ "$ipv6" = "" ]; then
+		echo
+		echo ' * IPV6 does not appear to be enabled';
+		echo
+	else
+		echo
+		echo 'IPv6 is enabled. A common issue is it does not ping out and wget and curl calls default to ipv6 - testing yahoo.com ping';
+		ping6 -w 3 -c2 yahoo.com
+		dosleep;
+	fi
+elif [ -f /etc/master.passwd ]; then
+	echo
+	echo 'IPs detected';
+	ifconfig | grep inet | egrep -v "inet6|127.0.0.1" | awk '{print $2}'
+	echo
+fi
+
+if [ -x /usr/bin/systemd-detect-virt ]; then
+	virt=`/usr/bin/systemd-detect-virt`;
+	if [ "$virt" = "none" ]; then
+		if [ -x /admin/assettemplate ]; then
+			/admin/assettemplate
+		fi
+		eficheck=`df -m | grep /boot/efi`;
+                if [ "$eficheck" = "" ]; then
+                        echo "  * NOTE /boot/efi is not mounted";
+                        dosleep;
+                fi
+
+	else
+		echo -n 'Virtualization detected: ';
+		echo $virt
+	fi
+	if [ ! -f /etc/machine-id ]; then
+		echo " * ${cyan}WARNING${normal}  /etc/machine-id is not present";
+		echo 'To fix run systemd-machine-id-setup';
+	fi
+
+	if [ "$virt" = "kvm" ]; then
+		vdacheck=`df -m | grep ^/dev/vda`;
+		if [ ! "$vdacheck" = "" ]; then
+			echo " * ${cyan}WARNING${normal} system is mounted with virtio not virtio-scsi which will prevent fstrim from working";
+			dosleep;
+		else
+			checkfortwo=`df -m | grep -v ^/dev/sda | grep ^/dev/sd`;
+			if [ ! "$checkfortwo" = "" ]; then
+				echo " * ${cyan}NOTE${normal} multiple devices found. For fstrim ensure that both drives are included";
+				dosleep;
+			fi
+
+			# no fstrim on zfs
+			if [ ! -x /usr/sbin/zfs ]; then
+				if [ ! -x /etc/cron.weekly/fstrim.sh ]; then
+					if [ -e /etc/cron.daily/fstrim.sh ]; then
+						echo " * ${cyan}NOTE${normal} move /etc/cron.daily/fstrim.sh to /etc/cron.weekly/fstrim.sh";
+						echo 'To fix: mv /etc/cron.daily/fstrim.sh /etc/cron.weekly/fstrim.sh';
+					else
+						echo " * ${cyan}NOTE${normal} Missing /etc/cron.weekly/fstrim.sh or it is not executable";
+						echo 'fstrim will reduce disk usage on the hostnode and potentially increase performance.';
+						dosleep;
+					fi
+				fi
+			fi
+		fi
+
+	fi
+fi
+
+if [ -e /etc/resolv.conf ]; then
+	rcheck=`grep 69.10.54.252 /etc/resolv.conf`;
+	if [ "$rcheck" = "nameserver 69.10.54.252" ]; then
+		echo 'Resolv.conf is OK';
+	else
+		echo " * ${cyan}WARNING${normal} default resolv.conf is not in use";
+		dosleep;
+	fi
+fi
+
+if [ ! -x /usr/bin/lsof -a ! -x /usr/sbin/lsof ]; then
+	echo 'Install lsof for webserver detection';
+else
+	wscheck=`lsof +c15 -n  -P  -i :80 | grep "*:80" | grep LISTEN | head -n 1 | awk '{print $1}'`;
+	if [ "$wscheck" = "" ]; then
+		echo 'Nothing listening on port 80';
+	else
+		echo "$wscheck is listening on port 80";
+		if [ -d /usr/local/lsws ]; then
+			if [ ! "$wscheck" = "litespeed" ]; then
+				echo " * ${cyan}WARNING${normal} /usr/local/lsws exists but litespeed is NOT on port 80";
+				dosleep;
+			fi
+			if [ -f /usr/local/directadmin/custombuild/options.conf ]; then
+				dawscheck=`grep webserver=litespeed /usr/local/directadmin/custombuild/options.conf | cut -d= -f2`;
+				if [ ! "$dawscheck" = "litespeed" ]; then
+					echo " * ${cyan}WARNING${normal} directadmin detected with /usr/local/lsws but webserver is not set to litespeed in options.conf it is $dawscheck";
+					dosleep;
+				fi
+			fi
+		fi
+	fi
+fi
+echo
+
+#hardware errors the os shows
+if [ -x /usr/bin/dmesg -o -x /bin/dmesg ]; then
+	overheat=`dmesg | grep "Package temperature above threshold"  | tail -n 1`;
+	if [ ! "$overheat" = "" ]; then
+		echo " * ${cyan}WARNING${normal} overheating messages detected in dmesg";
+		echo $overheat;
+		dosleep;
+	fi
+
+	oomkill=`dmesg | grep oom-kill`;
+	if [ ! "$oomkill" = "" ]; then
+		echo " * ${cyan}WARNING${normal} Out Of memory Kill logs detected in dmesg";
+		echo -e "${oomkill}";
+		echo 'end out of memory detection';
+		dosleep;
+	fi
+
+	pmsuspend=`dmesg | grep -i "PM: suspend"`;
+	if [ ! "$pmsuspend" = "" ]; then
+		echo " * ${cyan}WARNING${normal} PMSUSPEND shows in dmesg meaning the system has gone to sleep or hibernated";
+		echo -e "${pmsuspend}";
+		echo
+		echo 'To fix on ubuntu: systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.target';
+		dosleep;
+	fi
+
+else
+	echo 'Install dmesg to further hardware checks';
+	dosleep;
+fi
+
+# there is include/disk but directadmin does not call this since it has previous zfs functions
+# so I am adding this raid check in detect os
+if [ -f /proc/mdstat ]; then
+	raidcheck=`grep "\(F\)" /proc/mdstat`;
+	if [ ! "$raidcheck" = "" ]; then
+		echo " * ${cyan}WARNING${normal} /proc/mdstat shows a failed drive";
+		cat /proc/mdstat
+		dosleep;
+	fi
+fi
+
+if [ -x /usr/bin/last ]; then
+	checkans=`last -i -n 20000 | grep quags | grep 64.20.60.242`;
+	if [ "$checkans" = "" ]; then
+		echo " * ${cyan}WARNING${normal} No logins detected from ansible";
+		dosleep;
+	fi
+fi
+
+#this can cause a update failure
+if [ -e /usr/sbin/lvectl ]; then
+	clversion=`cat /etc/redhat-release  | cut -d" " -f3`;
+	if [ "$clversion" = "8.8" ]; then
+		if [ -e /lib/modules/4.18.0-348.lve.el8.x86_64/extra/lve-2.0-44.el8/kmodlve.ko -o -e /lib/modules/4.18.0-372.9.1.1.lve.el8.x86_64/extra/lve-2.0-47.el8/kmodlve.ko ]; then
+			echo "	* ${cyan}WARNING${normal} cloudlinux is 8.8 and may not be updating test with yum -y update";
+			echo " Related issue https://wiki.interserver.net/index.php/Requires_kernel(oops_in_progress)";
+			dosleep;
+		fi
+	fi
+fi

@@ -1,0 +1,223 @@
+#!/usr/bin/env bash
+
+# this can be removed after the first boot
+# crontab has @reboot /admin/firstbootkvm
+
+# run with yes otherwise exit
+if [ ! "$1" = "yes" ]; then
+	exit;
+fi
+
+ver=0;
+
+# for template updates
+# clear template, upgrade
+if [ "$2" = "clear" ]; then
+	/admin/resolvconf
+        if [ -e /etc/redhat-release ] ; then
+		if [ -x /usr/bin/dnf ]; then
+			ver=`awk '{print $3}' /etc/redhat-release  | cut -d. -f1`;
+			echo "Found version $ver";
+			echo -n 'Current machine id ';
+			cat /etc/machine-id
+			dnf -y upgrade
+		else
+                	yum -y upgrade
+		fi
+        elif [ -e /etc/debian_version ]; then
+		if [ -x /admin/upgradedebs ]; then
+                	/admin/upgradedebs
+		fi
+	else
+		echo 'Unable to upgrade';
+		sleep 1s;
+        fi
+
+	if [ -d /usr/local/directadmin ]; then
+		if [ -x /admin/updateda ]; then	
+			/admin/updateda all
+		fi
+		for cert in cacert.pem  cakey.pem  carootcert.pem; do
+			if [ -f /usr/local/directadmin/conf/${cert} ]; then
+				/bin/rm -v /usr/local/directadmin/conf/${cert}
+			fi
+		done
+	fi
+
+        unset HISTFILE
+        files='/root/.bash_history /etc/udev/rules.d/70-persistent-net.rules /etc/_firstboot /var/lib/dhcp/dhclient.leases /etc/machine-id';
+        for file in $files; do
+                if [ -f $file ]; then
+                        echo "Removing $file";
+                        /bin/rm $file
+                fi
+        done
+	# yes we run twice
+        /admin/upscripts nosec >/dev/null 2>&1
+        /admin/upscripts nosec >/dev/null 2>&1
+
+	# alma9 will not boot with out machineid (dbus doesn't start) and does not generate it
+	if [ "$ver" = "9" ]; then
+		echo 'Generating alma9 systemd-machine-id-setup';
+		sleep 1
+		systemd-machine-id-setup
+		echo -n 'New Machine id';
+		cat /etc/machine-id
+	fi
+
+	if [ -e /usr/sbin/xrdp ]; then
+		echo 'Generating ubuntu desktop systemd-machine-id-setup';
+		systemd-machine-id-setup
+		systemd-tmpfiles --create
+		systemctl stop sshd
+	fi
+
+	if [ -x /usr/sbin/logrotate ]; then
+		/usr/sbin/logrotate -f /etc/logrotate.conf
+	fi
+
+	if [ -f /var/log/firstboot.log ]; then
+		echo > /var/log/firstboot.log
+	fi
+
+
+	if [ -f /etc/ssh/sshd_config ]; then
+		passwordauthcheck=`grep ^PasswordAuthentication /etc/ssh/sshd_config | awk '{print $2}'`;
+		if [ "$passwordauthcheck" = "no" ]; then
+			echo "	* NOTE PasswordAuthentication is set to no in /etc/ssh/sshd_config change to yes";
+			sleep 1;
+		elif [ "$passwordauthcheck" = "" ]; then
+	                echo "  * NOTE PasswordAuthentication is unset in /etc/ssh/sshd_config change to yes";
+			sleep 1;
+		fi
+	else
+		echo '	* NOTE missing /etc/ssh/sshd_config';
+		sleep 1;
+	fi
+
+	if [ -d /var/webuzo ]; then
+		touch /var/webuzo/reconfigure
+		touch /root/webuzo
+	fi
+	# restart with new machine id
+	if [ -d /usr/local/directadmin ]; then
+		systemctl restart directadmin && da license
+	fi
+        exit;
+fi
+
+#only run once
+if [ -e /etc/_firstboot ]; then
+        exit;
+fi
+
+# firstboot kvm
+
+if [ ! -f /etc/machine-id ]; then
+        if [ -e /usr/bin/systemd-machine-id-setup ]; then
+		/usr/bin/systemd-machine-id-setup
+        fi
+fi
+
+
+# remove ssh keys
+if [ -e /etc/redhat-release -o -e /etc/debian_version ]; then
+	echo 'Reconfiguring ssh';
+	cd /etc/ssh
+	for sfile in ssh_host_dsa_key ssh_host_dsa_key.pub ssh_host_key ssh_host_key.pub ssh_host_rsa_key ssh_host_rsa_key.pub ssh_host_ecdsa_key ssh_host_ecdsa_key.pub ssh_host_ed25519_key ssh_host_ed25519_key.pub; do
+		if [ -f $sfile ]; then
+			/bin/rm -v $sfile
+		fi
+
+	done
+
+	if [ -e /etc/debian_version ]; then
+		dpkg-reconfigure openssh-server
+		systemd-tmpfiles --create
+	fi
+
+	if [ ! -f /etc/ssh/ssh_host_rsa_key ]; then
+	        ssh-keygen -t rsa -f /etc/ssh/ssh_host_rsa_key -q -N ""
+	fi
+	if [ ! -f /etc/ssh/ssh_host_dsa_key ]; then
+       		ssh-keygen -t dsa -f /etc/ssh/ssh_host_dsa_key -q -N ""
+	fi
+
+	if [ ! -f /etc/ssh/ssh_host_ecdsa_key ]; then
+        	ssh-keygen -t ecdsa -f /etc/ssh/ssh_host_ecdsa_key -q -N ""
+	fi
+
+	if [ ! -f /etc/ssh/ssh_host_ed25519_key ]; then
+                ssh-keygen -t ed25519 -f /etc/ssh/ssh_host_ed25519_key -q -N ""
+        fi
+
+
+	# restart ssh to regenerate
+	if [ -e /etc/init.d/sshd ]; then
+		/etc/init.d/sshd restart
+	elif [ -e /etc/init.d/ssh ]; then
+		/etc/init.d/ssh restart
+	else
+		systemctl restart sshd
+	fi
+fi
+
+# get correct resolv.conf
+if [ -e /etc/redhat-release ]; then
+	/admin/resolvconf
+fi
+
+sleep 10;
+/admin/upscripts
+if [ -d /usr/local/directadmin ]; then
+	if [ -x /admin/storage/config/setdalisc ]; then
+		/admin/storage/config/setdalisc force
+	fi
+fi
+
+if [ -d /usr/local/cpanel ]; then
+	if [ -x /admin/configs/cpanel/setcplisc ]; then
+		/admin/configs/cpanel/setcplisc
+	fi
+fi	
+
+if [ -f /root/webuzo -a -f /root/install.sh ]; then
+	if [ -x /admin/webuzo/firstboot ]; then
+		/admin/webuzo/firstboot
+	fi
+fi
+
+# file must be created after setdalisc is run
+touch /etc/_firstboot
+
+sleep 1
+
+if [ -x /usr/sbin/rdate ]; then
+	rdate -s rdate.interserver.net 
+elif [ -x /usr/bin/chronyc ]; then
+	chronyc -a 'burst 4/4'
+fi
+
+# this will be run only once on reboot it defaults back
+sysctl -w net.ipv6.conf.all.disable_ipv6=1
+sysctl -w net.ipv6.conf.default.disable_ipv6=1
+
+#restart sshd
+if [ -f /etc/init.d/ssh ]; then
+	/etc/init.d/ssh stop
+	/etc/init.d/ssh start
+elif [ -f /etc/init.d/sshd ]; then
+	/etc/init.d/sshd stop
+	/etc/init.d/sshd start
+else
+	systemctl stop sshd
+	systemctl start sshd
+fi
+
+# for storage and xfs one time
+check_partition=`cat /proc/mounts  | grep /dev/sda3 | grep xfs | awk '{print $1}'`;
+if [ "$check_partition" = "/dev/sda3" ]; then
+	if [ -x /usr/sbin/xfs_growfs ]; then
+		/usr/sbin/xfs_growfs /dev/sda3
+	fi
+fi

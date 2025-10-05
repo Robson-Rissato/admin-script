@@ -1,0 +1,49 @@
+#!/bin/bash
+
+server=192.64.87.219;
+
+myhostname=`hostname`;
+
+if [ "$1" = "" ]; then
+	echo "Usage ./send filename";
+	exit;
+fi
+
+if [ "$1" = "wp" ]; then
+	for myfile in `/admin/wp/grep 2>&1 | grep ^./`; do
+		if [ -f $myfile ]; then
+			/admin/ml/send $myfile
+			if [ "$2" = "rm" ]; then
+				echo -n "Remove $myfile ? ";
+				read wait
+				if [ "$wait" = "y" ]; then
+					/bin/rm -v $myfile
+				else
+					echo 'Not removing';
+				fi
+			fi
+		else
+			echo "nothing returned or $myfile not a file";
+		fi
+	done
+	exit;
+else
+	file=$1;
+fi
+
+if [ -f "$1" ]; then
+	fullname=$(readlink -f "${file}");
+	if [ "$NOUPDATE" = "1" ]; then
+		curl --connect-timeout 5 -X POST --form "submit=store" --form path="${fullname}" --form server="${myhostname}" --form fileToUpload=@"${file}" --form noupdate=1 http://${server}/s
+	else
+		curl --connect-timeout 5 -X POST --form "submit=store" --form path="${fullname}" --form server="${myhostname}" --form fileToUpload=@"${file}" http://${server}/s
+	fi
+
+	if [ -e /usr/bin/imunify360-agent ]; then
+		echo 'Submitting to imunify';
+		/usr/bin/imunify360-agent submit false-negative ${fullname}
+	fi
+
+else
+	echo "$1 is not a file";
+fi

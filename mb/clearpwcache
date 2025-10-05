@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+
+myuser=$1;
+if [ "$1" = "" ]; then
+        echo 'Usage ./clearpwcache mbXXXXX';
+        exit;
+fi
+
+# Regular expression to match username format "mb" followed by 0-9 digits (up to 10)
+username_regex="^mb[0-9]{0,10}$"
+
+# Check if 'myuser' matches the regular expression
+if [[ $myuser =~ $username_regex ]]; then
+  echo "Username '$myuser' matches the format 'mb0-9' (up to 10 digits)"
+else
+  echo "Username '$myuser' does NOT match the format 'mb0-9' (up to 10 digits)"
+fi
+
+echo "checking $myuser";
+
+# Get keys to delete
+keys=$(redis-cli -p 6380 KEYS *:${myuser}:*)
+
+# Check if any keys found
+if [ -z "$keys" ]; then
+  echo "No keys found matching pattern *:${myuser}:*"
+  exit 0
+fi
+
+# Delete keys
+redis-cli -p 6380 DEL $keys
+
+echo "Deleted keys matching pattern *:${myuser}:*"
+

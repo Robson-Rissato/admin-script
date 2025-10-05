@@ -1,0 +1,104 @@
+#!/bin/sh
+#
+# ipaliases       Bring up/down ipaliases
+#
+# chkconfig: 2345 11 91
+# description: Activates/Deactivates all ip aliases
+# probe: false
+
+# Source function library.
+if [ -f /etc/init.d/functions ]; then
+  . /etc/init.d/functions
+elif [ -f /etc/rc.d/init.d/functions ]; then
+  . /etc/rc.d/init.d/functions
+else
+  echo "Could not find functions file, your system may be broken"
+  exit 1
+fi
+
+if [ ! -f /etc/ips ]; then
+    exit 0
+fi
+
+
+[ -x /sbin/ifconfig ] || exit 0
+
+
+ETHDEV=`grep ETHDEV /etc/wwwacct.conf | awk '{print $2}'`
+
+if [ "$ETHDEV" = "" ]; then
+	ETHDEV=eth0
+fi
+if [ "$ETHDEV" = " " ]; then
+	ETHDEV=eth0
+fi
+
+# See how we were called.
+case "$1" in
+  start)
+	defaultmask="255.255.255.0"
+	dev=1
+	for ip in `cat /etc/ips`; do
+		broadcast=`echo $ip | awk -F: '{ print $3 }'`
+		netmask=`echo $ip | awk -F: '{ print $2 }'`
+		ip=`echo $ip | awk -F: '{ print $1 }'`
+		if [ "$netmask" = "" ]; then
+			broadcast=`echo $ip | awk -F. '{ print $1"."$2"."$3".255" }'`
+			action "Bringing up $ETHDEV:$dev" /sbin/ifconfig $ETHDEV:$dev $ip netmask $defaultmask broadcast $broadcast
+		elif [ "$netmask" = "255.255.255.0" ]; then
+			broadcast=`echo $ip | awk -F. '{ print $1"."$2"."$3".255" }'`
+			action "Bringing up $ETHDEV:$dev" /sbin/ifconfig $ETHDEV:$dev $ip netmask $netmask broadcast $broadcast
+		else
+			if [ "$broadcast" = "" ]; then
+				action "Bringing up $ETHDEV:$dev" /sbin/ifconfig $ETHDEV:$dev $ip netmask $netmask
+			else 
+				action "Bringing up $ETHDEV:$dev" /sbin/ifconfig $ETHDEV:$dev $ip netmask $netmask broadcast $broadcast
+			fi
+		fi
+		action "Routing $ip" /sbin/route add -host $ip dev $ETHDEV:$dev
+		dev=$(($dev+1))		
+	done
+        ;;
+  list)
+	dev=1
+	for ip in `cat /etc/ips`; do
+		broadcast=`echo $ip | awk -F: '{ print $3 }'`
+		netmask=`echo $ip | awk -F: '{ print $2 }'`
+		ip=`echo $ip | awk -F: '{ print $1 }'`
+		if [ "$netmask" = "" ]; then
+			echo "$ETHDEV:$dev $ip"
+		elif [ "$netmask" = "255.255.255.0" ]; then
+			broadcast=`echo $ip | awk -F. '{ print $1"."$2"."$3".255" }'`
+			echo "$ETHDEV:$dev $ip $netmask $broadcast"
+		else
+			if [ "$broadcast" = "" ]; then
+				echo "$ETHDEV:$dev $ip $netmask"
+			else 
+				echo "$ETHDEV:$dev $ip $netmask $broadcast"
+			fi
+		fi
+		dev=$(($dev+1))		
+	done
+        ;;
+  stop)
+	dev=1
+	for ip in `cat /etc/ips`; do
+		ip=`echo $ip | awk -F: '{ print $1 }'`
+		action "Shutting down $ETHDEV:$dev" /sbin/ifconfig $ETHDEV:$dev down
+		action "UnRouting $ip" /sbin/route del -host $ip dev $ETHDEV:$dev
+		dev=$(($dev+1))		
+	done
+        ;;
+  restart)
+	$0 stop
+	$0 start
+	;;
+  reload)
+	$0 restart
+	;;
+  *)
+        echo "Usage: ipaliases {start|stop|restart|reload}"
+        exit 1
+esac
+
+exit 0

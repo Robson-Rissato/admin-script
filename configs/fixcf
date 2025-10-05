@@ -1,0 +1,20 @@
+#!/bin/bash
+
+if [ ! "$1" = "force" ]; then
+	if [ -f /admin/.info/_fixcf ]; then
+		exit;
+	fi
+fi
+
+if [ -d /usr/local/cpanel ]; then
+	if [ -x /admin/configs/cloudflare.install.sh ]; then
+		/admin/configs/cloudflare.install.sh -k 0eae629706b81e5f66c5a76b10e14d71  -n 'InterServer'
+		if [ ! -d /admin/.info ]; then mkdir -p /admin/.info; fi
+		touch /admin/.info/_fixcf
+		if [ ! -d /usr/local/lsws ]; then
+			yum -y install ea-apache24-devel
+ 			wget https://raw.githubusercontent.com/cloudflare/mod_cloudflare/master/mod_cloudflare.c
+ 			/usr/bin/apxs -a -i -c mod_cloudflare.c
+		fi	
+	fi
+fi

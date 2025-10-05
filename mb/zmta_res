@@ -1,0 +1,19 @@
+#!/bin/sh
+
+if [ "$1" = "f" ]; then
+	echo 'fast restart';
+else
+	DELAY=$(jot -r 1 0 3600)
+	echo "Delaying for $DELAY seconds use /admin/mb/zmta_res f for fast restart"
+	sleep $DELAY
+fi
+
+if [ -d /var/service/zone-mta ]; then
+        svc -d /var/service/zone-mta; sleep 2
+	killall node
+        svc -u /var/service/zone-mta
+        tail -n 10 /var/log/zonemta.log
+fi
+
+
+

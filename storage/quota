@@ -1,0 +1,48 @@
+#!/usr/bin/perl
+
+use strict;
+
+my $me = `whoami`;
+my $mode = "user";
+
+my $user;
+
+chomp($me);
+
+if($me eq "root") { $mode = "root"; $user = $ARGV[0] || "root"; } else { $user = $me; }
+
+my ($name, $pass, $uid, $gid, $quot, $comment, $gcos, $dir, $shell, $expire) = getpwnam("$user");
+
+if (!$name) { print "quota: $user: unknown user\n"; exit; }
+my $quota;
+my $volume = "vz/" .$user;
+#print "$volume";
+#print "zfs get userquota@".$uid." ".$volume." |grep '".$volume."' |";
+open(Q, "/sbin/zfs get userquota@".$uid." ".$volume." |grep '".$volume."' |");
+while(<Q>) {
+    my @a = split (" ", $_);
+    #print "@a[2]";
+    if (@a[2] eq 'none') {
+        $quota = "none\n";
+    } else {
+        my $formula = { "K" => 1, "M" => 1024, "G" => 1048576, "T" => 1073741824 };
+        open (U, "/sbin/zfs get userused@".$uid." ".$volume." |grep '".$volume."'|");
+        while(<U>) {
+            my @b = split (" ", $_);
+            my ($u,$uk) = $b[2] =~ /^(.+)(\w)$/;
+            my ($q,$uq) = $a[2] =~ /^(.+)(\w)$/;
+
+            my $userused = $u * $formula->{$uk};
+            my $quotauser = $q * $formula->{$uq};
+
+            my @fs = split("/", $volume);
+
+            $quota .= "\n Filesystem      usage       quota       limit\n";
+            $quota .= sprintf("   /%s  %12s%12s%12s\n", $fs[1], $userused, $quotauser, $quotauser);
+        }
+        close(U);
+    }
+}
+close (Q);
+
+print "Disk quotas (kilobytes) for user $user (uid $uid): ".$quota;

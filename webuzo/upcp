@@ -1,0 +1,8 @@
+#!/bin/sh
+
+if [ -x /usr/local/emps/bin/php ]; then
+	if [ -f /usr/local/webuzo/cron.php ]; then
+		/usr/local/emps/bin/php /usr/local/webuzo/cron.php debug=3
+	fi
+fi
+

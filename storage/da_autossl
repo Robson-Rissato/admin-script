@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+
+if [ -d /usr/local/cpanel ]; then
+	if [ -x /admin/cpanel_le_user ]; then
+		/admin/cpanel_le_user $1
+	fi
+	echo 'System is cpanel';
+	exit;
+fi
+
+function runssl()
+{
+	runuser=$1;
+	if [ ! -f /usr/local/directadmin/data/users/$runuser/domains.list ]; then
+        	echo "User does not exist or missing /usr/local/directadmin/data/users/$runuser/domains.list";
+        	exit;
+	fi
+
+	if [ ! -x /usr/local/directadmin/scripts/letsencrypt.sh ]; then
+        	echo '/usr/local/directadmin/scripts/letsencrypt.sh is missing or not executable';
+        	exit;
+	fi
+
+	echo "Working on user $runuser";
+	# if we get here ready to process the domains
+	for domain in `cat /usr/local/directadmin/data/users/$runuser/domains.list`; do
+		echo "Working on $domain";
+       		/usr/local/directadmin/scripts/letsencrypt.sh request $domain
+		echo
+	done
+
+}
+
+if [ ! -e /usr/local/directadmin ]; then
+	echo 'No directadmin';
+	exit;
+fi
+
+if [ "$1" = "" ]; then
+	echo 'Usage ./da_autossl username|all';
+	exit;
+fi
+
+dauser=$1;
+
+if [ "$1" = "all" ]; then
+	if [ ! -d /usr/local/directadmin/data/users ]; then
+		echo 'Missing /usr/local/directadmin/data/users !!';
+		exit;
+	fi
+
+	cd /usr/local/directadmin/data/users
+	for i in *; do
+		if [ -d $i ]; then
+			runssl $i
+		fi
+	done
+else
+	runssl $dauser
+
+	# run a webserver reload and rewrite_confs JUST for the username (this is much faster)
+	if [ -x /admin/res ]; then
+		/admin/res httpd $dauser
+	fi
+	echo "Done with ssl for user $dauser";
+	exit;
+fi
+
+echo 'Done running rewrite_confs';
+
+if [ -x /usr/local/directadmin/custombuild/build ]; then
+	/usr/local/directadmin/custombuild/build rewrite_confs
+else
+	echo 'Missing /usr/local/directadmin/custombuild/build !!';
+fi

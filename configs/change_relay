@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+
+# modified 12/11/2024
+# easily change between mailbaby and mailchannels on webhosting servers
+
+if [ "$1" = "" ]; then
+	echo 'Usage ./change_relay mb|mc';
+	exit;
+fi
+
+function testnc() {
+	if [ -x /usr/bin/nc ]; then
+        	echo "testing telnet connection"
+		echo "quit" | /usr/bin/nc -w 1 webhosting-mailchannels-outbound.is.cc 25
+        else
+        	echo "install nc and run: /usr/bin/nc -w 1 webhosting-mailchannels-outbound.is.cc 25";
+        fi
+
+}
+
+
+if [ -d /usr/local/cpanel ]; then
+	if [ -f /etc/exim.conf.local ]; then
+		echo 'Current setting ';
+		grep route_list /etc/exim.conf.local
+		echo
+		sleep 2;
+		#to convert cpanel
+		if [ "$1" = "mc" ]; then
+			/admin/replace-linux "relay.mailbaby.net" "webhosting-mailchannels-outbound.is.cc" -- /etc/exim.conf.local
+			testnc
+		else
+	                /admin/replace-linux "webhosting-mailchannels-outbound.is.cc" "relay.mailbaby.net" -- /etc/exim.conf.local
+
+		fi
+		/scripts/buildeximconf && /scripts/restartsrv_exim
+		
+		sleep 2;
+		if [ -f /var/log/exim_mainlog ]; then
+			tail -n 10 /var/log/exim_mainlog
+		else
+			echo 'Missing /var/log/exim_mainlog';
+		fi
+	else
+		echo 'There is no /etc/exim.conf.local';
+	fi
+elif [ -d /usr/local/directadmin ]; then
+	#to convert directadmin
+	if [ -f /etc/exim.routers.pre.conf ]; then
+		echo 'Current setting';
+		grep route_list /etc/exim.routers.pre.conf | head -n 1
+		echo
+		sleep 2;
+		#mb means change to mailbaby
+		# mc means change to mailchannels
+		if [ "$1" = "mc" ]; then
+			echo "changing to webhosting-mailchannels-outbound.is.cc mailchannels";
+			/admin/replace-linux relay.mailbaby.net webhosting-mailchannels-outbound.is.cc -- /etc/exim.routers.pre.conf
+			testnc
+		else
+			#mailbaby only
+	                /admin/replace-linux webhosting-mailchannels-outbound.is.cc relay.mailbaby.net -- /etc/exim.routers.pre.conf
+
+		fi
+		/admin/replace-linux "port = 2525" "port = 25" -- /etc/exim.transports.pre.conf
+		/admin/replace-linux "port = 587" "port = 25" -- /etc/exim.transports.pre.conf
+		systemctl restart exim
+		echo
+		sleep 1;
+	else
+		echo 'Missing /etc/exim.routers.pre.conf';
+		exit
+	fi
+	sleep 2;
+	if [ -f /var/log/exim/mainlog ]; then
+		tail -n 10 /var/log/exim/mainlog
+	else
+		echo 'Missing /var/log/exim/mainlog';
+	fi
+else
+	echo 'Nothing to do';
+fi

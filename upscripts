@@ -1,0 +1,142 @@
+#!/usr/bin/env sh
+
+# 8/12/2025
+
+# /admin/.info/_ansible will auto allow 711 on /admin instead of 700
+
+# exit on rsync server
+if [ -f /root/_noupscripts ]; then
+	echo 'Exiting on /root/_noupscripts';
+	exit;
+fi
+
+# mkdir
+if [ ! -e /admin ]; then
+	mkdir -p /admin
+	chmod 700 /admin
+fi
+
+# hooks
+if [ "$1" = "nosec" ]; then
+	rsync --exclude .info --exclude modsecurity --timeout=100 -av rsync://rsync.is.cc/admin /admin
+elif [ "$1" = "beta" ]; then
+	rsync --timeout=100 --exclude .info -av rsync://rsync.is.cc/admin /admin
+else
+	rsync --exclude .info --exclude beta --timeout=100 -av rsync://rsync.is.cc/admin /admin
+fi
+
+# free bsd permissions
+if [ -f /etc/master.passwd ]; then
+	chown -R root:wheel /admin
+	if [ -d /usr/ports/.git ]; then
+		if [ -x /usr/local/bin/git ]; then
+			echo 'Checking ports';
+			/usr/local/bin/git -C /usr/ports pull --ff-only
+		fi
+	fi
+else
+	chown root:root -R /admin
+fi
+
+# mk temp dirs
+if [ ! -e /root/tmp ]; then
+	mkdir -p /root/tmp
+fi
+
+if [ ! -e /admin/.info ]; then
+	mkdir -p /admin/.info
+fi
+
+# remove old files
+for file in ls52.sh swift/swift_cpanel.sh updatefromtesting configs/mysqltuner.pl configs/vz6meltdown.repo fixetchosts getallgpg rpmverify fixubuntukvm configips ensurerpm getgpg inet rpm.pl show_recieving_ips showsmtpconnectioncount sysctl rc.local getphpconfigline portsnap portupgrade posteasyapache qmailforce rebuildqmailassign up3to4 up72to73 up73to80 up80to9 up9to3 updatecourierimap findkit fixkcare makepty verify newyumconf rebuildgroupgidsfrompasswd quicksecure denyhosts2.cfg denyhosts.cfg mysqlprocesslist mysqlmemflush latestkernel smartcheck devcheck cpanelchkproc findhack.sh entropychatdisable autoblocksyn showsynflood adddebianips autoaddips allips addcpanelips portaudit perlmodule pf kerneltempfix ensure_pkg pkg_add namedlog netconfig netfix mytop nptlfix.sh oldmagick nobodycheckgpgmysql gpgcentos wheeluser checkcommon check_error_log centos.yum searchreplace servicecheck securitycheck fixvzcpanelquota mkdirs.sh ipusage inotify.sh insrpm installrails bandminpass changecptheme changeserverhostname clear_eximstats.shapachebackup.sh add2chkservd blockconnlimit buildvarnishconfig interser.sh removecpanelbwlimit rescue-coreutils rollback.sh rootloginwarn rubyport tmp.noexec logrunner.sh disableeximstats crossrefhomewithpasswd cpupdate cphulk cpdavdisable cpfixquotas ext3writeback installdenyhosts kspliceinstall dir_index_enable outwar8080 outwardump outwarmon outwarphp outwarsql outwarssl getfalsedu fixvaliases addtfrepo addipbsd apache_ulimit tuning-primer.sh scanner/testscan.sh module-init-tools-source mish iplocalnetwork installyum module-init-tools fixcpanellogd fixmail fixbadrpms initialftppasswd installdbfile proftpd.sync pythonport restorehttpdentry sec092306.pl sec092406.pl unofficial unofficialcron exidemopatch eximconf eacceleratorport domainpointer cpanel_exploit_checker_092406.pl chkservdbind chkservdclamd apacheulimit simpleps lufs lufsfix fixtables findtrojans installmysql updatecpanel upcp initialrhsetup hackfix harden.sh freebsdprep backupmount apfcpanel.sea bashuprh62 chkrootkit.sea debian_cpanel deb_proftpd.sh etchosts fixentlinux installautoupdate jqcheck portmonitor.sh rh62fix rh62prep rh62secure rh62xinetd rh62mysql4 sshkeyme~ updatedb.save webpaneltocpanel kernel-2.6 updatecpanelmail proftpdconf prep.sh postupcp postcentos portconnectioncount latestproftpd latestssh latestssl killdns fix autoupdate deb_bashrc.patch deb_inet.patch deb_rc.local ports/dist/coreutils/coreutils-rescue kiss.save latestmysql apachebeautify btfmailcheck bfmailcheck error_log finddomsandusers findnameservers quagskey fmailcheck fmailcontactuser patch.pkg pkg.check phpnukewebmailcheck runallfmail vzcreatetun kiss shaper blockbr br.txt interserpatches intersertweak.sh installdirectadmin after_apache_make_install swift/sqlite mysqltuner.pl scanner/scanner.sh disablesendmailforuser rh9pstreefix rh9rpmfix rh9sslfix installsqmail pscan pkg modsec installzend disableexecin777 bsdcvs bsdenablesshroot bsdports freebsd-cpanelinstall freebsdpatch freebsd_umount_tmp default_suspended_page default_motd default_issue default_interser_page gpgprogeny installkiss moddos park upgraderpms updatemodsecrules2 updatemodsecrules updatemodsec2 updatemodsec sshd_config setupfp5 postgresql oldips initialfedorasetup initialdebsetup initialdasetup initialcentossetup fixvdscpan fixfantastico testing.repo scan.sh getvzscripts sendmaillog backupkey installrcgrsec rebuildcpanelinterchangecfg proc-exe namedca clean-osf skdetect.static skdetect chkproc chkproc.c serverchecktools rc.grsec rhcentospax chpax-list chkrootkit vmsplicepatch sockopspatch chkrootkit.sh clamavintegrate exim_log fixspam gencrt.sh masschangednsips masschangeip seticcenv ipstate magickusrlocal mkkern vzchangepackage updateroundcube installusermond installclamav host.conf getkern scanner/badips.sh swift/cpanelbackup.save vzconfbackup.save tests/tuning-primer.sh clamav/whitelist.ign2 configs/zfs/newzfs storage/user_destroy_post.sh configs/zfs/zfs.old configs/GeoLite2-Country.mmdb zpoollist zpoollist.c storage/awstats includes/colors whoownes.orig storage/all_pre.sh updateunbound; do
+        if [ -e /admin/$file ]; then
+                /bin/rm -v /admin/$file
+        fi
+done
+
+if [ -d /admin/beta ]; then
+	cd /admin/beta
+	for betafile in updateintconf scanner/run2.sh scanner/run.sh scanner/clamscanrun.sh virusscanner.sh ml/scan.sh goodips.sh ml/scan.sh ls52_set_cache_root_policy.sh ls52.sh wpmd5 intcsf findspammer badips scanner/d scanner/viruscannerd scanner/readme scanner/virusscanner.sh scanner/eicar.com.txt scanner/ssl_vhost.local scanner/reverse.ldb scanner/openfile.sh scanner/enphpopen scanner/files/index.php scanner/vhost.local scanner/scancwd ml/scanlogtxt ml/updatedb.conf ml/send runall mailchannelscron scanner/runtmpscanlog whoownes.orig; do
+		if [ -e $betafile ]; then
+			/bin/rm -v $betafile;
+		fi 
+	done
+fi
+
+# i think we can remove ports over time
+for port in nginx nginx-legacystable; do
+	if [ -d /admin/ports/dist/$port ]; then
+		cd /admin/ports/dist
+		/bin/rm -rf $port
+	fi
+done
+
+# imunify360 has replaced this we should remove this over time
+if [ -e /admin/scanner/clamscanrun.sh ]; then
+	if [ ! -e /admin/scanner/quickscan.sh ]; then
+		if [ -e /admin/virusscanner.sh ]; then
+			echo 'Making quickscan';
+			ln -s /admin/virusscanner.sh /admin/scanner/quickscan.sh
+		fi
+	fi
+fi
+
+# set permissions higher on some servers
+if [ -d /root/cpaneldirect ]; then
+        if [ -x /tools/upscripts ]; then
+                chmod 711 /admin
+	elif [ -x /usr/sbin/cagefsctl ]; then
+		chmod 711 /admin
+        elif [ -x /scripts/upscripts ]; then
+                chmod 711 /admin
+	fi
+elif [ -d /usr/local/directadmin -a -f /usr/bin/jailshell ]; then
+	chmod 711 /admin
+elif [ -x /usr/sbin/cagefsctl ]; then
+	chmod 711 /admin
+elif [ -f /admin/.info/_ansible ]; then
+	chmod 711 /admin
+fi
+
+# intershield / mod sec
+if [ -e /opt/intershield/tmp ]; then
+	if [ ! -e /opt/intershield/var/run ]; then
+		mkdir -p /opt/intershield/var
+		chown mailnull:mail /opt/intershield/var
+	fi
+	chmod 711 /opt/intershield/var/run
+	rsync -a rsync://rsync.is.cc/intershield/ /opt/intershield/
+fi
+
+if [ -d /opt/intershield/tmp  ]; then
+	echo 'Updating modsec';
+	rsync -a rsync://rsync.is.cc/modsecurity/ /admin/modsecurity/
+elif [ -f /etc/httpd/conf.d/00_mod_security.conf ]; then
+        if [ -f /root/.swift/config ]; then
+		echo 'Updating modsec';
+		rsync -a rsync://rsync.is.cc/modsecurity/ /admin/modsecurity/
+		exit 0;
+	fi
+elif [ -f /etc/apache2/conf.d/atomicmodsec.conf ]; then
+	if [ -f /root/.swift/config ]; then
+		echo 'Updating modsec';
+		rsync -a rsync://rsync.is.cc/modsecurity/ /admin/modsecurity/
+        	exit 0;
+	fi
+fi
+
+if [ -d /root/cpaneldirect ]; then
+	if [ -x /scripts/upscripts ]; then
+		if [ -e /usr/sbin/libvirtd -a -f /etc/debian_version ]; then
+			echo 'Running /scripts/upscripts';
+			/scripts/upscripts
+		fi
+	fi
+
+	if [ -x /tools/upscripts ]; then
+		if [ -x /usr/bin/prlctl ]; then
+			echo 'Running /tools/upscripts';
+			/tools/upscripts
+		fi
+	fi
+fi

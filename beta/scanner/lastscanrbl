@@ -1,0 +1,32 @@
+#!/bin/bash
+
+if [ ! -f /root/tmp/_lastscanned ]; then
+        echo '/root/tmp/_lastscanned does not exist';
+        exit;
+fi
+
+
+if [ ! -f /admin/scanner/clamscanrun.sh ]; then
+        echo 'Missing /admin/scanner/clamscanrun.sh';
+        exit;
+fi
+
+if [ ! -x /opt/scan.sh ]; then
+        echo 'Missing /opt/scan.sh';
+        exit;
+fi
+
+for filelist in $(cat /root/tmp/_lastscanned); do
+        echo "Working on ${filelist}";
+        if [ -f ${filelist} ]; then
+                check=$(/admin/beta/scanner/rblscan "${filelist}");
+                if [ "$check" = "NONE" ]; then
+                        /opt/scan.sh "${filelist}"
+                else
+                        echo 'File has been scanned before';
+                fi
+        else
+                echo "${filelist} does not exist";
+        fi
+done
+

@@ -1,0 +1,11 @@
+
+You may want to do
+
+mkdir -p /etc/mrtg && cp /admin/ports/mrtg/system /etc/mrtg && cp /admin/ports/mrtg/mrtg.cfg /etc/mrtg/
+
+
+and add
+
+/usr/local/bin/mrtg /etc/mrtg/mrtg.cfg 
+
+to startup scripts

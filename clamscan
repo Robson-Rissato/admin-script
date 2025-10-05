@@ -1,0 +1,400 @@
+#!/bin/bash
+
+version=version-01-1.26.2018;
+
+debug=0;
+
+if [ "$debug" = "0" ]; then
+
+        echo() { :; }
+fi
+
+
+echo $version;
+
+
+# /admin/.info/_noatomic
+# /admin/whitelist.fp
+
+# shelldb updatedb|fast
+# justdb
+# cp fast
+
+# justdb q|remove norecursive
+# alldb
+
+#escape directory
+#MYDIR=`printf "%q\n" "$(pwd)"`;
+# it appears we don't need to do this
+MYDIR=`pwd`;
+allow=0;
+
+if [ ! -d "$MYDIR" ]; then
+	printf "Failed sanity check at line $LINENO current working dir $MYDIR \n";
+	exit;
+fi
+
+if [ ! -d /opt/intershield/tmp/scancwd ]; then
+	echo 'Creating /opt/intershield/tmp/scancwd';
+	mkdir -p /opt/intershield/tmp/scancwd
+	chmod 660 /opt/intershield/tmp/scancwd
+	chmod 711 /opt/intershield
+fi
+
+usercheck=$(stat -c '%U' "$MYDIR");
+echo -n 'Owner of current dir is '
+echo $usercheck
+
+if [ "$usercheck" = "root" ]; then
+	echo 'Removals and quarentines are not allowed';
+else
+	echo 'Removals are allowed';
+	allow=1;
+fi
+
+#todo move quarentine to its own function
+
+if [ ! -x /usr/bin/nc ]; then
+	if [ -e /etc/redhat-release ]; then
+		yum -y install nc
+	fi
+fi
+
+
+# send commands to socket for restart
+function nc_restart() {
+
+        if [ -x /usr/bin/nc ]; then
+                if [ -S /var/clamd ]; then
+                        printf RELOAD | /usr/bin/nc -U /var/clamd > /dev/null 2>&1
+                elif [ -S /tmp/clamd ]; then
+                        printf RELOAD | /usr/bin/nc -U /tmp/clamd > /dev/null 2>&1
+                else
+                        echo 'Did not find clamd socket';
+                fi
+        else
+                echo 'NC is not installed for clamd reload';
+        fi
+
+
+}
+
+# test socket
+function socktest() {
+        socktest=$(printf PING | /usr/bin/nc -U $1);
+}
+
+# find socket
+for socket in /var/clamd /var/run/clamav/clamd.sock /var/run/clamav/clamd.ctl /tmp/clamd; do
+        if [ -S $socket ]; then
+
+		if [ "$VERBOSE" = "1" ]; then
+                	echo -n "Found socket location $socket";
+		fi
+                socktest $socket
+                if [ "$socktest" = "PONG" ]; then
+			if [ "$VERBOSE" = "1" ]; then
+                        	echo '...tests ok';
+			fi
+                        break;
+                else
+
+			if [ "$VERBOSE" = "1" ]; then
+                        	echo "...error and restarting returned $socktest";
+			fi
+
+                        /scripts/restartsrv_clamd >/dev/null
+                        sleep 10s;
+
+                        socktest $socket
+                        if [ "$socktest" = "PONG" ]; then
+				if [ "$VERBOSE" = "1" ]; then
+                                	echo '...tests ok';
+				fi
+                        else
+
+				if [ "$VERBOSE" = "1" ]; then
+                                	echo 'Final restart';
+				fi
+                                killall -9 clamd clamdscan >/dev/null
+                                /scripts/restartsrv_clamd >/dev/null
+                                socktest $socket
+				if [ "$VERBOSE" = "1" ]; then
+                                	echo "Returned $socket"
+				fi
+                        fi
+                        break;
+                fi
+        else
+		if [ "$VERBOSE" = "1" ]; then
+                	echo "No socket found";
+		fi
+        fi
+done
+
+
+# debug
+if [ "$VERBOSE" = "" ]; then
+	VERBOSE=1;
+fi
+
+useclamd=0;
+if [ -x /usr/local/cpanel/3rdparty/bin/clamscan ]; then
+	CLAM_LOC=/usr/local/cpanel/3rdparty/bin/clamscan;
+	CLAMD_FOLDER=/usr/local/cpanel/3rdparty/bin;
+	FRESHCLAM=/usr/local/cpanel/3rdparty/bin/freshclam;
+elif [ -x /usr/bin/clamscan ]; then
+	CLAM_LOC=/usr/bin/clamscan;
+	FRESHCLAM=/usr/bin/freshclam;
+	CLAMD_FOLDER=/usr/bin;
+else
+	CLAM_LOC=`which clamscan`;
+	FRESHCLAM=`which freshclam`;
+fi
+
+if [ "$CLAM_LOC" = "" ]; then
+	echo 'ClamAV not installed';
+	exit;
+else
+	if [ "$VERBOSE" = "1" ]; then
+		echo "Found $CLAM_LOC";
+	fi
+fi
+
+clamdcheck=$(ps auxw | grep "$CLAMD_FOLDER/[c]lamd");
+if [ ! "$clamdcheck" = "" ]; then
+	useclamd=1;
+	CLAMD_LOC=$CLAMD_FOLDER/clamdscan;
+	echo "Preferring $CLAMD_LOC";
+fi
+
+# just run third party db
+if [ "$1" = "justdb" ]; then
+	echo "Just shelldb";
+	/admin/upscripts > /dev/null 2>&1
+	
+	if [ "$2" = "remove" ]; then
+		echo 'removing anything that is found, in 3 seconds'
+		sleep 3s;
+		# use clamscan
+		if [ "$allow" = "0" ]; then
+			echo 'Removals are not permitted on root owned folders';
+		else
+			if [ "$3" = "norecursive" ]; then
+				echo '	non recursive';
+				$CLAM_LOC --remove -d /admin/whitelist.fp -d /admin/shell.ldb -d /admin/shell.ndb -d /admin/shell.hdb -d /admin/clamav/interserver256.hdb --infected --no-summary "${MYDIR}"
+			else		
+				$CLAM_LOC --remove -d /admin/whitelist.fp -d /admin/shell.ldb -d /admin/shell.ndb -d /admin/shell.hdb -d /admin/clamav/interserver256.hdb --infected --recursive --no-summary "${MYDIR}"
+			fi
+		fi
+	elif [ "$2" = "q" ]; then
+		echo 'quarentine anything that is found, in 3 seconds to /opt/intershield/tmp/scancwd'
+                sleep 3s;
+                # use clamscan
+                if [ "$allow" = "0" ]; then
+                        echo 'Removals are not permitted on root owned folders';
+                else
+			if [ ! -d /opt/intershield/tmp/scancwd ]; then
+				mkdir -p /opt/intershield/tmp/scancwd
+			fi
+
+			if [ ! -f /opt/intershield/tmp/scancwd/log.txt ]; then
+				touch /opt/intershield/tmp/scancwd/log.txt
+			fi
+
+			if [ -x /usr/bin/shuf ]; then
+                        	num=$(shuf -i 1-20 -n 1);
+                        else
+                        	num=1;
+                        fi
+                        echo "Using random num $num";
+                        dfolder=$(date +%Y%m%d);
+                        echo "Using date $dfolder";
+                        if [ ! -d /opt/intershield/tmp/scancwd/$dfolder ]; then
+	                        mkdir -p /opt/intershield/tmp/scancwd/$dfolder
+                        fi
+
+
+
+			if [ "$3" = "norecursive" ]; then
+
+                                echo '  non recursive';
+                                $CLAM_LOC --move="/opt/intershield/tmp/scancwd/$dfolder" --log="/opt/intershield/tmp/scancwd/log_$num".txt -d /admin/whitelist.fp -d /admin/shell.ldb -d /admin/shell.ndb -d /admin/shell.hdb -d /admin/clamav/interserver256.hdb --infected --no-summary "${MYDIR}"
+                        else
+                                $CLAM_LOC --move="/opt/intershield/tmp/scancwd/$dfolder" --log="/opt/intershield/tmp/scancwd/log_$num.txt" -d /admin/whitelist.fp -d /admin/shell.ldb -d /admin/shell.ndb -d /admin/shell.hdb -d /admin/clamav/interserver256.hdb --infected --recursive --no-summary "${MYDIR}"
+                        fi
+		fi
+	else
+		# use clamscan
+		$CLAM_LOC -d /admin/whitelist.fp -d /admin/shell.ldb -d /admin/shell.ndb -d /admin/shell.hdb -d /admin/clamav/interserver256.hdb --infected --recursive "${MYDIR}"
+	fi
+	exit;
+fi
+
+# all dbps
+if [ "$1" = "alldb" ]; then
+        echo "All DBs no removals or quarentine";
+        /admin/upscripts > /dev/null 2>&1
+	# use clamscan
+        $CLAM_LOC -d /admin/whitelist.fp -d /admin/shellb.ldb -d /admin/shell.ldb -d /admin/shell.hdb -d /admin/shellb.db -d /admin/clamav/interservertopline.db -d /admin/clamav/interserver256.hdb -d /admin/shellb.hdb -d /admin/clamav/ASL-advanced.ldb -d /admin/clamav/ASL-badmacro.ndb -d /admin/clamav/ASL-blacklist.ldb -d /admin/clamav/ASL-fraud.ndb -d /admin/clamav/ASL-h.ndb -d /admin/clamav/ASL-honeynet.hdb -d /admin/clamav/ASL-honeypot-hex.ndb -d /admin/clamav/ASL-honeypot.hdb -d /admin/clamav/ASL-phish.ndb -d /admin/clamav/ASL-policy-bad-extensions.cdb -d /admin/clamav/ASL-policy-dangerous-extensions.cdb -d /admin/clamav/ASL-rogue.hdb -d /admin/clamav/ASL-sanesecurity-phish.ndb -d /admin/clamav/ASL-sanesecurity-rogue.hdb -d /admin/clamav/ASL-securite-honeynet.hdb -d /admin/clamav/ASL-securiteinfo.hdb -d /admin/clamav/ASL-securiteinfobat.hdb -d /admin/clamav/ASL-securiteinfodos.hdb -d /admin/clamav/ASL-securiteinfoelf.hdb -d /admin/clamav/ASL-securiteinfohtml.hdb -d /admin/clamav/ASL-securiteinfooffice.hdb -d /admin/clamav/ASL-securiteinfopdf.hdb -d /admin/clamav/ASL-securiteinfosh.hdb -d /admin/clamav/ASL-spamlist.ldb -d /admin/clamav/ASL.hdb -d /admin/clamav/ASL.ldb -d /admin/clamav/ASL_securiteinfo_javascript.ndb /admin/clamav/rfxn.hdb -d /admin/clamav/rfxn.ndb --infected --recursive "${MYDIR}"
+        exit;
+fi
+
+
+# cp for cpanel
+if [ "$1" = "cp" ] ; then
+	if [ -e /usr/local/cpanel/3rdparty/bin/clamd ]; then
+		echo 'Called with cp - fast is default on';
+		/admin/upscripts
+		/usr/local/cpanel/3rdparty/bin/freshclam
+		/admin/clamscan shelldb fast
+
+		# temp fix
+		if [ ! -f /usr/local/cpanel/3rdparty/share/clamav/local.ign2 ]; then
+			echo Vbs.Downloader.Generic-6431223-0 >> /usr/local/cpanel/3rdparty/share/clamav/local.ign2
+		fi
+		# end temp fix
+
+		nc_restart
+		/scripts/restartsrv_clamd
+		exit;
+	fi
+fi
+
+
+if [ "$1" = "shelldb" ]; then
+	if [ "$debug" = "0" ]; then
+        	/admin/upscripts > /dev/null 2>&1
+	fi
+
+	# find virus db
+	if [ -x /usr/local/cpanel/3rdparty/bin/clamconf ]; then
+		clamdir=$(/usr/local/cpanel/3rdparty/bin/clamconf | grep ^"Database directory:" | awk '{print $3}');
+	elif [ -x /usr/bin/clamconf ]; then
+		clamdir=$(/usr/bin/clamconf | grep ^"Database directory:" | awk '{print $3}');
+	else
+		echo 'Did not find clamconf location';
+		exit;
+	fi
+
+	if [ $debug = "1" ]; then
+		echo "clamdir $clamdir";
+	fi
+
+	# update virusdb
+	for intclamfile in /admin/shell.db /admin/shell.hdb /admin/whitelist.fp /admin/clamav/interserver256.hdb /admin/shell.ldb /admin/whitelist.ign2; do
+		cp -f $intclamfile $clamdir
+	done
+	if [ -f /etc/cron.d/virusscanner_php.sh ]; then
+		if [ ! -e /admin/.info/_noatomic ]; then
+        		/bin/cp -f /admin/clamav/ASL.ldb /admin/clamav/ASL-honeypot-hex.ndb /admin/clamav/ASL-honeypot.hdb /admin/clamav/ASL-honeynet.hdb /admin/clamav/ASL-h.ndb /admin/clamav/ASL.hdb $clamdir
+			if [ -f $clamdir/ASL-advanced.ldb ]; then
+				/bin/rm -v $clamdir/ASL-spamlist.ldb $clamdir/ASL-securiteinfopdf.hdb $clamdir/ASL-securiteinfooffice.hdb $clamdir/ASL-securiteinfohtml.hdb $clamdir/ASL-securiteinfo.hdb $clamdir/ASL-securiteinfoelf.hdb $clamdir/ASL-securiteinfodos.hdb $clamdir/clamav/ASL-securiteinfobat.hdb $clamdir/ASL-securite-honeynet.hdb $clamdir/ASL-sanesecurity-rogue.hdb $clamdir//ASL-policy-dangerous-extensions.cdb $clamdir/ASL-policy-bad-extensions.cdb $clamdir/ASL-blacklist.ldb $clamdir/ASL-advanced.ldb
+			fi
+		else
+			echo 'Atomic disabled in shelldb';
+                	if [ -e $clamdir/ASL.ldb ]; then
+				/bin/rm -v $clamdir/*$ASL*
+			fi
+			
+		fi
+	elif [ ! -e /etc/asl ]; then
+		if [ ! -e /admin/.info/_noatomic ]; then
+			cp -f /admin/ASL-h.ndb $clamdir
+			cp -f /admin/ASL.hdb $clamdir
+		fi
+	fi
+
+	# restart gracefully
+	nc_restart
+
+	if [ "$2" = "fast" ]; then
+		echo 'Exiting on fast';
+		exit;
+	fi
+fi
+
+# update mode for cron and exit
+if [ "$2" = "updatedb" -o "$2" = "updated" ]; then
+	echo "update db mode only";
+	${FRESHCLAM}
+	nc_restart
+	if [ ! -e /etc/cron.d/virusscanner_php.sh ]; then
+		echo "Running /admin/exi scancwd faster";
+		/admin/exi scancwd faster
+	fi
+	if [ -x /admin/updatelitespeed.sh ]; then
+		echo 'Running /admin/updatelitespeed.sh';
+		/admin/updatelitespeed.sh
+	fi
+
+        if [ -e /etc/chkserv.d/lfd ]; then
+                /bin/cp -f -u /admin/configs/lfd.chkservd /etc/chkserv.d/lfd
+        fi
+
+	exit;
+fi
+
+# start the normal / standard scans
+if [ "$VERBOSE" = "1" ]; then
+	echo 'This will scan in the current working directory';
+	echo
+fi
+
+# skip logs and mail
+if [ "$1" = "faster" ]; then
+	# clamd not in use because it does not support include dir
+	$CLAM_LOC --recursive --exclude-dir=/logs --exclude-dir=/.quarentine --exclude-dir=/tmp --exclude-dir=virtfs --exclude-dir=mail --exclude-dir=/var/log --exclude-dir=/backup --exclude-dir=/usr/local/apache --exclude-dir=/usr/local/cpanel/logs --infected --exclude-dir=/proc --exclude-dir=.cagefs --exclude-dir=/sys "${MYDIR}"
+	exit;
+# remove (better to use quarentine)
+elif [ "$1" = "remove" -o "$2" = "remove" ]; then
+	echo "I will remove infected files, ctrl + c if this is in error (they are not recoverable)"
+	sleep 5s;
+	echo "starting...in ${MYDIR}"
+	if [ "$allow" = "0" ]; then
+                echo 'Removals are not permitted on root owned folders';
+	else
+		$CLAM_LOC --remove --recursive --infected --no-summary "${MYDIR}";
+	fi
+	exit;
+# move to quarentine
+elif [ "$1" = "quarentine" -o "$1" = "q" -o "$2" = "quarentine" -o "$2" = "q" ]; then
+
+	echo "Running with quarentine, designed for cpanel in /home";
+
+	if [ "$allow" = "0" ]; then
+                echo 'Removals are not permitted on root owned folders';
+		exit;
+	fi
+
+	if [ -e /admin/scanner/clamscanrun.sh ]; then
+		export SUPRESS=1;
+		if [ "$2" = "norecursive" -o "$3" = "norecursive" -o "$4" = "norecursive" ]; then
+			find -maxdepth 1 -type f | xargs -d '\n' -n1 /admin/scanner/clamscanrun.sh
+		else
+			find -type f | xargs -d '\n' -n1 /admin/scanner/clamscanrun.sh
+		fi
+
+	else
+		echo '/admin/scanner/clamscanrun.sh not found, will only display output';
+                /admin/clamscan shelldb
+	fi
+else
+# skip recursive
+	if [ "$1" = "norecursive" -o "$2" = "norecursive" -o "$3" = "norecursive" -o "$4" = "norecursive" ]; then
+		$CLAM_LOC --infected --no-summary "${MYDIR}";
+	# for wordpress (same for now but prepped for possible changes)
+	elif [ "$VERBOSE" = "0" ]; then
+		$CLAM_LOC --recursive --infected --no-summary "${MYDIR}";
+	else
+		#default
+		if [ "$debug" = "1" ]; then
+			echo "# starting default scan";
+		fi
+		$CLAM_LOC --recursive --infected --no-summary "$MYDIR";
+		if [ "$debug" = "1" ]; then
+                        echo "# starting shellb scan";
+                fi
+		$CLAM_LOC --no-summary --infected --recursive -d /admin/whitelist.fp -d /admin/clamav/interservertopline.db -d /admin/shellb.db -d /admin/shellb.ldb -d /admin/shellb.hdb ${MYDIR}
+	fi
+fi

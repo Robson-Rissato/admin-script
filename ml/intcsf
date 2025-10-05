@@ -1,0 +1,117 @@
+#!/bin/bash
+
+#if [ -f /var/lib/csf/csf.block.INTERSERVER ]; then
+#	exit;
+#fi
+
+if [ ! -f /etc/redhat-release -a ! -f /etc/debian_version ]; then
+	echo 'Centos/RHEL/debian only';
+	exit;
+fi
+
+if [ ! -e /usr/sbin/csf ]; then
+	echo 'csf not installed';
+	exit;
+fi
+
+if [ ! -e /etc/csf/csf.allow ]; then
+	echo 'Missing /etc/csf/csf.allow';
+	exit;
+fi
+
+if [ ! -e /etc/csf/csf.blocklists ]; then
+	echo 'Missing /etc/csf/csf.blocklists';
+	exit;
+fi
+
+if [ -e /proc/user_beancounters ]; then
+	echo 'openvz detected using IPSLIM';
+	SLIM=1;
+else
+	SLIM=0;
+fi
+
+restart=0;
+
+if [ "$(grep "^Include /etc/csf/whitelist.txt$" /etc/csf/csf.allow)" = "" ]; then
+	echo 'Adding whitelist to /etc/csf/csf.allow';
+	if [ ! -f /etc/csf/whitelist.txt ]; then
+		wget -O /etc/csf/whitelist.txt http://sigs.interserver.net/whitelist.txt
+		if [ -f /etc/csf/whitelist.txt ]; then
+			echo "Include /etc/csf/whitelist.txt" >> /etc/csf/csf.allow
+			echo 'Added';
+			restart=1;
+		else
+			echo 'Download failed /etc/csf/whitelist.txt  doe not exist';
+			exit;
+		fi
+
+	fi
+else
+	echo "Updating whitelist if needed";
+	cd /etc/csf
+        wget -N http://sigs.interserver.net/whitelist.txt && export restart=1;
+fi
+
+# in the future we can comment this out if /etc/asl/whitelist exists
+
+if [ -f /etc/asl/whitelist ]; then
+	if [ "$(grep "^Include /etc/asl/whitelist$" /etc/csf/csf.ignore)" = "" ]; then
+        	echo "Adding in asl/whitelist exclude";
+        	echo "Include /etc/asl/whitelist" >> /etc/csf/csf.ignore
+	fi
+fi
+
+if [ "$(grep "^Include /etc/csf/goodbots.txt$" /etc/csf/csf.ignore)" = "" ]; then
+	wget -O /etc/csf/goodbots.txt http://sigs.interserver.net/goodbots.txt && export restart=1;
+	echo "Adding in goodbots.txt";
+	echo "Include /etc/csf/goodbots.txt" >> /etc/csf/csf.ignore
+else
+	echo "Updating goodbots if needed";
+	cd /etc/csf
+	wget -N http://sigs.interserver.net/goodbots.txt && export restart=1;
+fi	
+
+if [ "$SLIM" = "1" ]; then
+
+	if [ "$(grep "^INTERSERVER|3600|0|http://sigs.interserver.net/ip" /etc/csf/csf.blocklists)" = "" ]; then
+                echo 'Adding interserver SLIM  blocklist to /etc/csf/csf.blocklists';
+                echo "INTERSERVER|3600|0|http://sigs.interserver.net/ipslim.txt" >> /etc/csf/csf.blocklists
+                restart=1;
+        fi
+
+else
+	if [ "$(grep "^INTERSERVER|3600|0|http://sigs.interserver.net/ip" /etc/csf/csf.blocklists)" = "" ]; then
+		echo 'Adding interserver blocklist to /etc/csf/csf.blocklists';
+		echo "INTERSERVER|3600|0|http://sigs.interserver.net/ip.txt" >> /etc/csf/csf.blocklists
+		restart=1;
+	fi
+fi
+
+if [ "$(grep "^OUTBOUNDBLOCK|3600|0|http://sigs.interserver.net/csf_block_list_but_not_rbl" /etc/csf/csf.blocklists)" = "" ]; then
+        echo 'Adding OUTBOUNDBLOCK SLIM  blocklist to /etc/csf/csf.blocklists';
+        echo "OUTBOUNDBLOCK|3600|0|http://sigs.interserver.net/csf_block_list_but_not_rbl.txt" >> /etc/csf/csf.blocklists
+	restart=1;
+fi
+
+
+if [ "$restart" = "1" ]; then
+	# fix fast restart issues
+	#if [ -f /etc/csf/csf.deny ]; then
+	#	/bin/rm -v /etc/csf/csf.deny
+	#	touch /etc/csf/csf.deny
+	#else
+	#	touch /etc/csf/csf.deny
+	#fi
+	#/usr/sbin/csf -u
+	#/usr/sbin/csf -r
+	service lfd restart
+	sleep 3s;
+
+	if [ -f /var/lib/csf/csf.block.INTERSERVER ]; then
+		echo 'Success';
+	else
+		echo '/var/lib/csf/csf.block.INTERSERVER does not exist, there must be an error';
+	fi
+fi
+

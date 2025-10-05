@@ -1,0 +1,23 @@
+#!/bin/bash
+
+if [ -d /usr/local/cpanel/etc/exim/sysfilter/options ]; then
+	mkdir -p /opt/intershield/var/spam
+	chown mailnull:mail /opt/intershield/var/spam
+	if [ -f /usr/local/cpanel/etc/exim/sysfilter/options/samb ]; then
+		/bin/cp -v /admin/configs/cpanel/samb /usr/local/cpanel/etc/exim/sysfilter/options/samb
+	else
+		/bin/cp -u -v /admin/configs/cpanel/samb /usr/local/cpanel/etc/exim/sysfilter/options/samb
+	fi
+        whmapi1 set_tweaksetting key=email_outbound_spam_detect_enable value=1
+        whmapi1 set_tweaksetting key=email_outbound_spam_detect_action value=hold
+        whmapi1 set_tweaksetting key=email_outbound_spam_detect_threshold value=250
+	check=`grep ^filter_samb=1$ /etc/exim.conf.localopts`;
+	if [ "$check" = "" ]; then 
+		check2=`grep ^filter_samb=0$ /etc/exim.conf.localopts`;
+		if [ "$check2" = "filter_samb=0" ]; then
+			/admin/replace-linux filter_samb=0 filter_samb=1 -- /etc/exim.conf.localopts
+		else
+			echo filter_samb=1 >> /etc/exim.conf.localopts && /scripts/buildeximconf
+		fi
+	fi
+fi

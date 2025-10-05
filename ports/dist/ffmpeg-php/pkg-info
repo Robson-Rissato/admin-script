@@ -1,0 +1,2 @@
+You must add the extension to php.ini: 
+extension=ffmpeg.so

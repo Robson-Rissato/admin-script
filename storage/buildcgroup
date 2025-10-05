@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+
+
+if [ -e /usr/sbin/unitd -o -f /admin/.info/_nocgrules ]; then
+	echo 'Cgroups skipped on propack or /admin/.info/_nocgrules';
+	for cg in cgconfigparser cgrulesgend; do
+		if [ -e /etc/systemd/./system/multi-user.target.wants/$cg.service ]; then
+			systemctl stop $cg.service
+			systemctl disable $cg.service
+		fi
+	done
+	exit;
+fi
+
+if [ ! -d /usr/local/directadmin/data/users/ ]; then
+        echo 'Missing /usr/local/directadmin/data/users/';
+        exit;
+fi
+
+if [ ! -f /etc/cgrules.conf ]; then
+        echo 'Missing /etc/cgrules.conf';
+        exit;
+fi
+
+# defaults
+if [ -d /etc/rspamd ]; then
+        package='standard';
+else
+        package='storage';
+
+fi
+
+#https://access.redhat.com/documentation/en-us/red_hat_enterprise_linux/6/html/resource_management_guide/sec-moving_a_process_to_a_control_group
+#https://serverfault.com/questions/719994/cgroups-limit-memory-per-user
+if [ -e /root/tmp/cgrules.conf ]; then
+	/bin/rm -v /root/tmp/cgrules.conf
+fi
+touch /root/tmp/cgrules.conf
+
+for i in `ls /usr/local/directadmin/data/users/ | grep -v ^admin$`; do
+	if [ -f /usr/local/directadmin/data/users/${i}/user.conf ]; then 
+		pcheck=`grep ^package= /usr/local/directadmin/data/users/${i}/user.conf | cut -d= -f2 | tr '[:upper:]' '[:lower:]'`;
+		# blkio appears to not work on zfs except perhaps limit only the major minor (one disk)
+		# so I removed blkio from the original ${i} cpu,memory,blkio,pids ${pcheck}/%g/%u
+		if [ "$pcheck" = "boost2" -o "$pcheck" = "boost4" -o "$pcheck" = "standard" -o "$pcheck" = "storage" ]; then
+			echo "${i} cpu,memory,pids ${pcheck}/%g/%u" >> /root/tmp/cgrules.conf
+		else
+			echo "user $i falling back to standard package $package";
+			echo "${i} cpu,memory,pids ${package}/%g/%u" >> /root/tmp/cgrules.conf
+		fi
+	else
+		echo "Missing /usr/local/directadmin/data/users/${i}/user.conf skipping";
+	fi
+done
+
+/bin/mv -f /root/tmp/cgrules.conf /etc/cgrules.conf
+
+echo 'done creating config restarting engine';
+cp -u /admin/storage/config/cgred.conf /etc/cgred.conf
+cp -u /admin/storage/config/cgconfig.conf /etc/cgconfig.conf
+cgroupfs-mount 2>/dev/null
+systemctl stop cgconfigparser.service; systemctl start cgconfigparser.service; systemctl stop cgrulesgend; systemctl start cgrulesgend
+systemctl -a | grep -i cgroup
+
+echo 'done';
+

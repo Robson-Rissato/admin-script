@@ -1,0 +1,377 @@
+#!/usr/bin/env bash
+
+#/admin/configs/relaylist
+
+if [ "$1" = "" -o "$2" = "" ]; then
+	if [ ! "$1" = "fix" ]; then
+		echo 'Usage ./intrelay user pass';
+		exit;
+	fi
+fi
+
+if [ "$1" = "fix" ]; then
+	if [ -f /etc/exim.conf.local ]; then
+		rc=`egrep "smartrelay.is.cc|relay.mailbaby.net" /etc/exim.conf.local`;
+		if [ "$rc" = "" ]; then
+			echo 'Relay is not installed, we can not run fix';
+			exit;
+		fi
+		myuser=`grep client_send /etc/exim.conf.local| awk '{print $4}'`
+		pass=`grep client_send /etc/exim.conf.local| awk '{print $6}'`
+		if [ "$myuser" = "" -o "$pass" = "" ]; then
+			echo 'Can not fix got missing variables';
+			exit;
+		fi
+	elif [ -f /etc/exim.routers.pre.conf ]; then
+		rc=`grep relay.mailbaby.net /etc/exim.routers.pre.conf`;
+		if [ "$rc" = "" ]; then
+			echo 'Relay not installed not running fix';
+			exit;
+		fi
+		if [ -f /etc/exim.authenticators.post.conf ]; then
+			myuser=`grep client_send /etc/exim.authenticators.post.conf | awk '{print $5}'`;
+			pass=`grep client_send /etc/exim.authenticators.post.conf | awk '{print $7}'`;
+		else
+			echo 'missing /etc/exim.authenticators.post.conf for fix run';
+			exit;
+		fi
+	fi
+else
+	myuser=$1;
+	pass=$2;
+	echo "Using username $myuser";
+fi
+
+if [ -f /scripts/buildeximconf ]; then
+        echo 'cPanel detected';
+	if [ ! -f /etc/exim.conf.localopts ]; then
+		echo 'Missing /etc/exim.conf.localopts';
+		exit;
+	fi
+	touch /admin/.info/intrelay
+
+# begin default config
+if [ -f /etc/exim.conf.local ]; then
+	mv /etc/exim.conf.local /etc/exim.conf.local~
+fi
+
+cat > /etc/exim.conf.local <<EOF
+%RETRYBLOCK%
++secondarymx                    *                               F,4h,5m; G,16h,1h,1.5; F,4d,8h
+*                               *                               F,2h,15m; G,16h,1h,1.5; F,4d,8h
+*                               auth_failed
+@AUTH@
+# keep compatibility with mcclean
+mailchannels_login:
+ driver = plaintext
+ public_name = LOGIN
+ client_send = : $myuser : $pass
+
+@BEGINACL@
+
+@CONFIG@
+allow_mx_to_ip = yes
+chunking_advertise_hosts = ""
+local_from_check = true
+message_size_limit = 100M
+openssl_options = +no_sslv2 +no_sslv3
+ignore_bounce_errors_after = 1h
+timeout_frozen_after = 12h
+smtp_accept_max = 300
+
+EOF
+
+if [ -d /root/cpaneldirect ]; then
+	echo 'Adding in samb1';
+
+cat >> /etc/exim.conf.local <<EOF
+
+system_filter_directory_transport = local_copy_outgoing
+
+EOF
+
+fi
+
+cat >> /etc/exim.conf.local <<EOF
+
+
+@DIRECTOREND@
+
+
+@DIRECTORMIDDLE@
+
+@DIRECTORSTART@
+
+@ENDACL@
+
+@POSTMAILCOUNT@
+
+remoteserver_route:
+ driver = manualroute
+.ifdef SRSENABLED
+    # if outbound, and forwarding has been done, use an alternate transport
+    transport = \${if eq {\$local_part@\$domain} \
+                        {\$original_local_part@\$original_domain} \
+                     {interserver_smtp} {interserver_forward_smtp}}
+.else
+    transport = interserver_smtp
+.endif
+ domains = !+local_domains
+ ignore_target_hosts = 127.0.0.0/8
+ route_list = * relay.mailbaby.net::25 randomize byname
+ host_find_failed = defer
+ no_more
+
+
+@PREDOTFORWARD@
+
+@PREFILTER@
+
+@PRELOCALUSER@
+
+@PRENOALIASDISCARD@
+
+@PREROUTERS@
+
+@PREVALIASNOSTAR@
+
+@PREVALIASSTAR@
+
+@PREVIRTUALUSER@
+
+@RETRYEND@
+
+@RETRYSTART@
+*                               data_4xx                        F,4h,1m
+*                               rcpt_4xx                        F,4h,1m
+*                               timeout                         F,4h,1m
+*                               refused                         F,1h,5m
+*                               lost_connection                 F,1h,1m
+*                               *                               F,6h,5m
+
+@REWRITE@
+
+@ROUTEREND@
+
+@ROUTERMIDDLE@
+
+@ROUTERSTART@
+
+@TRANSPORTEND@
+
+@TRANSPORTMIDDLE@
+
+@TRANSPORTSTART@
+    interserver_smtp:
+    driver = smtp
+    hosts_require_auth = *
+    tls_tempfail_tryclear = true
+    headers_add = X-AuthUser: \${if match {\$authenticated_id}{.*@.*}    {\$authenticated_id} {\${if match {\$authenticated_id}{.+} {\$authenticated_id@\$primary_hostname}{\$authenticated_id}}}}
+    dkim_domain = \${lookup{\$sender_address_domain}lsearch,ret=key{/etc/localdomains}}
+    dkim_selector = default
+    dkim_canon = relaxed
+    dkim_private_key = "/var/cpanel/domain_keys/private/\${dkim_domain}"
+    message_linelength_limit = 65536
+
+interserver_forward_smtp:
+    driver = smtp
+    hosts_require_auth = *
+    tls_tempfail_tryclear = true
+    headers_add = X-AuthUser: \${if match {\$authenticated_id}{.*@.*}    {\$authenticated_id} {\${if match {\$authenticated_id}{.+} {\$authenticated_id@\$primary_hostname}{\$authenticated_id}}}}
+    dkim_domain = \${lookup{\$sender_address_domain}lsearch,ret=key{/etc/localdomains}}
+    dkim_selector = default
+    dkim_canon = relaxed
+    dkim_private_key = "/var/cpanel/domain_keys/private/\${dkim_domain}"
+    message_linelength_limit = 65536
+    .ifdef SRSENABLED
+       return_path = \${srs_encode {SRS_SECRET} {\$return_path} {\$original_domain}}
+    .endif
+    max_rcpt = 1
+EOF
+
+if [ -d /root/cpaneldirect ]; then
+        echo 'Adding in samb2';
+
+cat >> /etc/exim.conf.local <<EOF
+
+local_copy_outgoing:
+  driver = appendfile
+  delivery_date_add
+  envelope_to_add
+  return_path_add
+  group = mail
+  user = mailnull
+  mode = 0660
+  maildir_format = true
+  create_directory = true
+
+
+EOF
+
+/admin/configs/cpanel/exporter
+
+fi
+
+
+# end exim.conf.local
+
+	hostname=`hostname`;
+        if [ -f /etc/localdomains ]; then
+                check=`grep ^${hostname}$ /etc/localdomains`;
+                if [ "$check" = "" ]; then
+                        echo $hostname >> /etc/localdomains
+                        echo 'adding in hostname to /etc/localdomains';
+                fi
+        fi
+
+	# set config and rebuild
+	spfcheck=`grep ^spf_include_hosts= /etc/exim.conf.localopts | cut -d= -f2`;
+	if [ "$spfcheck" = "relay.mailchannels.net" ]; then
+		/admin/replace-linux spf_include_hosts=relay.mailchannels.net spf_include_hosts=relay.mailbaby.net -- /etc/exim.conf.localopts
+	elif [ "$spfcheck" = "relay.mailbaby.net" ]; then
+		echo 'SPF is relay.mailbaby.net which is OK';
+		sleep 1s;
+	elif [ "$spfcheck" = "relay.is.cc" ]; then
+                echo 'SPF is relay.is.cc which is OK';
+                sleep 1s;
+	elif [ "$spfcheck" = "relay.mailchannels.net,relay.is.cc" ]; then
+		echo 'SPF is relay.mailchannels.net,relay.is.cc which changing';
+		/admin/replace-linux spf_include_hosts=relay.mailchannels.net,relay.is.cc spf_include_hosts=relay.mailbaby.net -- /etc/exim.conf.localopts
+		sleep 1s;
+	else
+		echo "CHECK SPF RECORD WHICH IS $SPF (may be blank)";
+		sleep 2s;
+		echo ".....................";
+	fi
+
+        /admin/replace-linux rewrite_from=all rewrite_from=disable -- /etc/exim.conf.localopts
+        /scripts/update_db_cache &
+        /scripts/buildeximconf && /scripts/restartsrv_exim
+
+	/admin/configs/allowlist_intrelay
+
+        # cron to ensure everything is working correctly
+
+        if [ -f /admin/mailchannelscron ]; then
+                /admin/mailchannelscron
+                if [ ! -e /etc/cron.daily/mailchannelscron ]; then
+                        cd /etc/cron.daily && ln -s /admin/mailchannelscron
+                fi
+        fi
+
+        if [ ! -e /etc/cron.hourly/mccleanqueue ]; then
+                cd /etc/cron.hourly && ln -s /admin/mccleanqueue
+        fi
+
+	echo "You may want to run";
+	echo "cp -a /var/named /var/named.old"
+	echo "cd /var/named/; replace "include:relay.is.cc include:relay.mailchannels.net" "include:relay.mailbaby.net" -- *.db"
+	echo "/scripts/restartsrv_pdns"
+
+	if [ ! "$1" = "fix" ]; then
+		/scripts/enable_spf_dkim_globally -x
+	fi
+elif [ -d /usr/local/directadmin ]; then
+        echo 'Directadmin detected';
+        if [ -f /etc/exim.routers.pre.conf ]; then /bin/rm -v /etc/exim.routers.pre.conf; fi
+        if [ -f /etc/exim.transports.pre.conf ]; then /bin/rm -v /etc/exim.transports.pre.conf; fi
+        if [ -f /etc/exim.authenticators.post.conf ]; then /bin/rm -v /etc/exim.authenticators.post.conf; fi
+        #wget -O /etc/exim.routers.pre.conf http://files.directadmin.com/services/SpamBlocker/smart_route/exim.routers.pre.conf
+        #wget -O /etc/exim.transports.pre.conf http://files.directadmin.com/services/SpamBlocker/smart_route/exim.transports.pre.conf
+        #wget -O /etc/exim.authenticators.post.conf http://files.directadmin.com/services/SpamBlocker/smart_route/exim.authenticators.post.conf
+cat >> /etc/exim.authenticators.post.conf <<EOF
+auth_login:
+    driver = plaintext
+    public_name = LOGIN
+    hide client_send = : your@email.com : yourpass
+EOF
+
+shorty=`hostname -s | cut -c1-3`;
+if [ "$shorty" = "vda" ]; then
+	port=2525;
+	echo 'Using port 2525 for vda systems';
+	sleep 1;
+else
+	port=25;
+fi
+
+
+cat >> /etc/exim.transports.pre.conf <<EOF
+auth_relay:
+    driver = smtp
+    port = $port
+    hosts_require_auth = \$host_address
+    hosts_require_tls = \$host_address
+    headers_add = "\${if def:authenticated_id{X-Authenticated-Id: \${authenticated_id}}}"
+    interface = <; \${if exists{/etc/virtual/domainips}{\${lookup{\$sender_address_domain}lsearch*{/etc/virtual/domainips}}}}
+    helo_data = \${if exists{/etc/virtual/helo_data}{\${lookup{\$sending_ip_address}iplsearch{/etc/virtual/helo_data}{\$value}{\$primary_hostname}}}{\$primary_hostname}}
+    hosts_try_chunking =
+    hosts_try_fastopen =
+    message_linelength_limit = 65536
+.include_if_exists /etc/exim.dkim.conf
+
+auth_relay_forward:
+    driver = smtp
+    port = $port
+    hosts_require_auth = \$host_address
+    hosts_require_tls = \$host_address
+    headers_add = "\${if def:authenticated_id{X-Authenticated-Id: \${authenticated_id}}}"
+    interface = <; \${if exists{/etc/virtual/domainips}{\${lookup{\$sender_address_domain}lsearch*{/etc/virtual/domainips}}}}
+    helo_data = \${if exists{/etc/virtual/helo_data}{\${lookup{\$sending_ip_address}iplsearch{/etc/virtual/helo_data}{\$value}{\$primary_hostname}}}{\$primary_hostname}}
+    hosts_try_chunking =
+    hosts_try_fastopen =
+    max_rcpt = 1
+    message_linelength_limit = 65536
+    return_path = \${srs_encode {SRS_SECRET} {\$return_path} {\$original_domain}}
+.include_if_exists /etc/exim.dkim.conf
+EOF
+
+cat >> /etc/exim.routers.pre.conf <<EOF
+smart_route_forward:
+    driver = manualroute
+    domains = ! +local_domains
+    ignore_target_hosts = 127.0.0.0/8
+    condition = \${if !eq{\$original_domain}{\$domain}}
+    condition = \${if !eq{\$original_domain}{}}
+    condition = "\${perl{check_limits}}"
+    
+    transport = auth_relay_forward
+
+    route_list = * relay.mailbaby.net
+    no_more
+
+smart_route:
+    driver = manualroute
+    domains = ! +local_domains
+    ignore_target_hosts = 127.0.0.0/8
+    condition = "\${perl{check_limits}}"
+
+    transport = auth_relay
+
+    route_list = * relay.mailbaby.net
+    no_more
+EOF
+
+
+        /admin/replace-linux "your@email.com" "${myuser}" -- /etc/exim.authenticators.post.conf
+        /admin/replace-linux "yourpass" ${pass} -- /etc/exim.authenticators.post.conf
+        /admin/replace-linux "smtp.yourisp.com" "relay.mailbaby.net::25 randomize byname" -- /etc/exim.routers.pre.conf
+        #echo "          headers_add = X-AuthUser: \$authenticated_id" >> /etc/exim.transports.pre.conf
+        /admin/replace-linux X-Authenticated-Id X-AuthUser -- /etc/exim.transports.pre.conf
+
+	/usr/local/directadmin/directadmin set extra_spf_value " include:relay.mailbaby.net"
+
+	cd /usr/local/directadmin/custombuild
+        ./build exim_conf
+
+	if [ -e /usr/sbin/csf ]; then
+		echo 'Adding csf intcsf';
+		/admin/ml/intcsf
+	fi
+
+        if [ ! -e /etc/cron.hourly/mccleanqueue ]; then
+                cd /etc/cron.hourly && ln -s /admin/mccleanqueue
+        fi
+	echo "spf set but you may want to check https://help.directadmin.com/item.php?id=616 ";
+fi
+# end cpanel

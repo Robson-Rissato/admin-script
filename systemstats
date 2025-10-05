@@ -1,0 +1,88 @@
+#!/usr/bin/env bash
+
+# Check if bc is installed
+if [ ! -x "$(command -v bc)" ]; then
+        echo "bc is not installed"
+        read -p "bc is not installed. Would you like to install it (y/n) " bc
+        if [ $bc = "y" ]; then
+                if [[ "$(cat /etc/os-release | grep PRETTY_NAME |  grep -o '".*"' | sed 's/"//g')" =~ ^CentOS.* ]]; then
+                        yum -y update;
+                        yum -y install bc;
+                elif [[ "$(cat /etc/os-release | grep PRETTY_NAME |  grep -o '".*"' | sed 's/"//g')" =~ ^AlmaLinux.* ]]; then
+                        yum -y update;
+                        yum -y install bc;
+                elif [[ "$(cat /etc/os-release | grep PRETTY_NAME |  grep -o '".*"' | sed 's/"//g')" =~ ^Ubuntu.* ]]; then
+                        apt update;
+                        apt -y install bc;
+                elif [[ "$(cat /etc/os-release | grep PRETTY_NAME |  grep -o '".*"' | sed 's/"//g')" =~ ^FreeBSD.* ]]; then
+                        echo "Sorry, FreeBSD not supported.... yet :)";
+                        exit;
+                fi
+        else
+                echo "Unable to install bc!"
+        fi
+fi
+
+# Get the CPU usage
+cpu_usage=$(top -b -n1 | grep "Cpu(s)" | awk '{print $2}' | cut -d. -f1)
+
+# Get the memory usage
+test -e /proc/spl/kstat/zfs/arcstats && arc_size=$(printf "%.0f\n" $arc_size | head -1)
+available_memory=$(free -g | grep Mem | awk '{print $7}')
+total_available_memory=$((available_memory + arc_size))
+total_mem=$(free -g | grep Mem |  awk '{print$2}')
+
+usedmemory=$(free -g | grep Mem | awk '{print $3}' | awk '{print int($0)}')
+test -e /proc/spl/kstat/zfs/xuio_stats && arcmemory=$(python /admin/configs/zfs/arc_summary.py | grep "ARC Size:" | awk '{print $4}' | awk '{print int($0)}' | head -1)
+test -e /proc/spl/kstat/zfs/arcstats && arcmemory=$(/usr/sbin/arc_summary | grep "ARC size" | awk '{print $6}' | awk '{print int($0)}' | head -1)
+test -e /proc/spl/kstat/zfs/arcstats && usedmemory=$((usedmemory - arcmemory))
+totalmemory=$(free -g | grep Mem | awk '{print $2}' | awk '{print int($0)}')
+mem_usage=$(echo "scale=2; $usedmemory/$totalmemory*100" | bc | awk '{print int($0)}')
+
+# Get the disk usage
+disk_usage=$(df -h / | grep /dev | awk '{print $5}')
+test -f /sbin/zpool && disk_usage=$(zpool list -H -o capacity vz)
+test -f /usr/sbin/vzctl && disk_usage=$(df -h /vz | grep /dev | awk '{print $5}')
+
+# Get the number of running processes
+processes=$(ps aux | wc -l)
+
+# Get the number of users
+users=$(who | wc -l)
+test -e /home/quags/usercount && users=$(cat /home/quags/usercount)
+
+# Get the current date and time
+date=$(date)
+
+# Get the load average
+load_average=$(top -b -n1 | grep load | head -1 | awk '{print $NF}')
+
+# Get the hostname
+hostname=$(hostname)
+
+# Get the operating system
+test -f /etc/os-release && os=$(cat /etc/os-release | grep PRETTY_NAME |  grep -o '".*"' | sed 's/"//g')
+test -f /etc/redhat-release && os=$(cat /etc/redhat-release)
+
+# Get the kernel version
+kernel_version=$(uname -r)
+
+# Get the uptime
+uptime=$(uptime | awk '{print $3, $4}' | tr -d ,)
+
+
+# print the variables
+printf "%-70s\n" "-" | sed 's/\s/-/g'
+echo "Hostname                : $hostname"
+echo "OS                      : $os"
+echo "Kernel Version          : $kernel_version"
+echo "Uptime                  : $uptime"
+echo "CPU Usage %             : $cpu_usage%"
+echo "Mem Usage %             : $mem_usage%"
+echo "Disk Usage %            : $disk_usage"
+echo "Number of Processes     : $processes"
+echo "Number of Users         : $users"
+echo "Date                    : $date"
+echo "Load Average            : $load_average"
+printf "%-70s\n" "-" | sed 's/\s/-/g'
+

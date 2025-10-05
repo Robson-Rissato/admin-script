@@ -1,0 +1,268 @@
+#!/bin/bash
+
+# touch /admin/.info/ALL_nginxcacheskip - everyone
+# touch /admin/.info/username_nginximageskip  to skip image proxy
+# touch /admin/.info/username_nginxcacheskip  to skip caching proxy
+# can not handle www.*.domain.com
+# need to clean up /etc/hosts creator
+# to do lock file
+# on a /etc/hosts build we use /etc/hosts.orig
+
+if [ ! -e /usr/local/nginx ]; then
+	exit;
+fi
+
+enabled=`cat /var/cpanel/cpanel.config  | grep ^apache_port= | cut -d: -f2`;
+if [ ! "$enabled" = "81" ]; then
+        echo "nginx not enabled";
+        exit;
+fi
+
+if [ ! -e /var/www/nginx ]; then
+	mkdir -p /var/www/nginx
+	mkdir -p /var/www/nginx/tmp
+	chown nobody:nobody -R /var/www/nginx
+fi
+
+if [ ! "$1" = "yes" ]; then
+	exit;
+fi
+
+echo "/etc/hosts run";
+sleep 1s;
+
+if [ ! -e /admin/.info/nginxvhostconvert ]; then
+	touch /admin/.info/nginxvhostconvert
+	cp -f /etc/hosts /etc/hosts.orig
+else
+	if [ -e /etc/hosts.orig ]; then
+		cp -f /etc/hosts.orig /etc/hosts
+	else
+		echo "Nginx convert already ran but there is no /etc/hosts.orig"
+		sleep 2s;
+	fi
+fi
+
+
+
+if [ -f /usr/local/nginx/conf/virtual.include ]; then
+	mv -f /usr/local/nginx/conf/virtual.include /usr/local/nginx/conf/virtual.include.old
+fi
+
+touch /usr/local/nginx/conf/virtual.include
+
+cd /var/cpanel/users
+for user in *; do
+
+        # get domains
+        domains=`cat /var/cpanel/users/$user  | grep ^DNS | cut -d= -f2`;
+
+        #documentroot
+        for domain in $domains; do
+                # sanity
+                if [ -f /var/cpanel/userdata/$user/$domain ]; then
+                        # path 
+                        path=`cat /var/cpanel/userdata/$user/$domain | grep ^documentroot: | awk '{print $2}'`;
+                        #ip
+			ip="";
+                        ip=`cat /var/cpanel/userdata/$user/$domain | grep ip: | awk '{print $2}'`;
+                        # in case this is ever blank
+                        serveralias="";
+                        serveralias=`cat /var/cpanel/userdata/$user/$domain | grep serveralias: | cut -d: -f2-`;
+                        servername="";
+                        servername=`cat /var/cpanel/userdata/$user/$domain | grep servername: | awk {'print $2}'`;
+                        #debug
+                        echo -e "Found domain: $domain \npath: $path \nip: $ip\nserveralias: $serveralias\nservername $servername"
+
+                        # /etc/hosts
+			if [ "$2" = "hosts" ]; then
+                        	echo "$ip $domain" >> /etc/hosts
+			fi
+
+if [ -f /admin/.info/${user}_nginxcacheskip ]; then
+	echo "Found  /admin/.info/${user}_nginxcacheskip";
+fi
+
+if [ -f /admin/.info/${user}_nginximageskip ]; then
+
+echo "Found /admin/.info/${user}_nginximageskip "
+
+cat >> "/usr/local/nginx/conf/virtual.include" <<EOF
+   server {
+        access_log off;
+        listen       80;
+        server_name  $servername $serveralias;
+
+        location /
+        {
+
+        location ~ /\.ht {
+          deny all;
+        }
+
+            client_max_body_size       100m;
+            client_body_buffer_size    128k;
+
+            proxy_send_timeout         90;
+            proxy_read_timeout         90;
+
+            proxy_buffer_size          4k;
+            proxy_buffers              4 32k;
+            proxy_busy_buffers_size    64k;
+            proxy_temp_file_write_size 64k;
+
+            proxy_connect_timeout 30s;
+
+            proxy_redirect     off;
+
+                proxy_redirect  http://www.$domain:81   http://www.$domain;
+                proxy_redirect  http://$domain:81   http://$domain;
+
+                proxy_pass   http://$domain:81;
+
+            proxy_set_header   Host             \$host;
+            proxy_set_header   X-Real-IP        \$remote_addr;
+            proxy_set_header   X-Forwarded-For  \$proxy_add_x_forwarded_for;
+
+        }
+
+
+    }
+
+EOF
+
+else
+
+
+cat >> "/usr/local/nginx/conf/virtual.include" <<EOF
+
+   server {
+        access_log off;
+        listen       80;
+        server_name  $servername $serveralias;
+EOF
+
+
+
+if [ ! -e /admin/.info/${user}_nginxcacheskip ]; then
+	if [ ! -e /admin/.info/ALL_nginxcacheskip ]; then
+
+
+cat >> "/usr/local/nginx/conf/virtual.include" <<EOF
+	set \$cache_uri \$request_uri;
+
+        # POST requests and urls with a query string should always go to PHP
+        if (\$request_method = POST) {
+                set \$cache_uri 'null cache';
+        }
+        if (\$query_string != "") {
+                set \$cache_uri 'null cache';
+        }
+
+	# bruteforce
+	#location ~ (wp-admin\.php|wp-login.php)\$ {
+	#		if (\$server_protocol ~* "HTTP/1.0") {
+    	#		return 444;
+	#	}
+	#}
+
+# Don't cache uris containing the following segments
+        if (\$request_uri ~* "(/wp-admin/|/xmlrpc.php|post.php|/wp-(app|cron|login|register|mail).php|wp-.*.php|/feed/|index.php|wp-comments-popup.php|wp-links-opml.php|wp-locations.php|sitemap(_index)?.xml|[a-z0-9_-]+-sitemap([0-9]+)?.xml)") {
+                set \$cache_uri 'null cache';
+        }
+
+        # Don't use the cache for logged in users or recent commenters
+        if (\$http_cookie ~* "comment_author|wordpress_[a-f0-9]+|wp-postpass|wordpress_logged_in") {
+                set \$cache_uri 'null cache';
+        }
+
+EOF
+	fi
+fi
+
+#end first cache skip
+
+cat >> "/usr/local/nginx/conf/virtual.include" <<EOF
+
+        location /
+        {
+EOF
+
+if [ ! -e /admin/.info/${user}_nginxcacheskip ]; then 
+	if [ ! -e /admin/.info/ALL_nginxcacheskip ]; then
+
+cat >> "/usr/local/nginx/conf/virtual.include" <<EOF
+		proxy_cache my-cache;
+   		proxy_cache_valid  200 302  15m;
+   		proxy_cache_valid  404      1m;
+EOF
+	fi
+fi
+#end second cache skip
+
+cat >> "/usr/local/nginx/conf/virtual.include" <<EOF
+        location ~ /\.ht {
+          deny all;
+        }
+EOF
+
+if [ ! -e /admin/.info/ALL_nginxcacheskip ]; then
+
+cat >> "/usr/local/nginx/conf/virtual.include" <<EOF
+#removed txt for robots.txt generation in wordpress
+location ~* ^.+.(jpg|jpeg|gif|png|ico|zip|tgz|gz|rar|bz2|iso|doc|xls|exe|pdf|ppt|tar|mid|midi|wav|bmp|rtf|mp3|ogv|ogg|flv|swf|mpeg|mpg|mpeg4|mp4|avi|wmv|js|css)\$ {
+        	expires 24h;
+			proxy_cache my-cache;
+		}
+EOF
+
+fi
+
+#end third cache skip
+
+if [ ! -e /admin/.info/ALL_nginxcacheskip ]; then
+	cat >> "/usr/local/nginx/conf/virtual.include" <<EOF
+                root $path;
+EOF
+
+fi
+cat >> "/usr/local/nginx/conf/virtual.include" <<EOF
+
+            client_max_body_size       10m;
+            client_body_buffer_size    128k;
+
+            proxy_send_timeout         90;
+            proxy_read_timeout         90;
+
+            proxy_buffer_size          4k;
+            proxy_buffers              4 32k;
+            proxy_busy_buffers_size    64k;
+            proxy_temp_file_write_size 64k;
+
+            proxy_connect_timeout 30s;
+
+            proxy_redirect     off;
+
+                proxy_redirect  http://www.$domain:81   http://www.$domain;
+                proxy_redirect  http://$domain:81   http://$domain;
+
+                proxy_pass   http://$domain:81;
+
+            proxy_set_header   Host             \$host;
+            proxy_set_header   X-Real-IP        \$remote_addr;
+            proxy_set_header   X-Forwarded-For  \$proxy_add_x_forwarded_for;
+
+        }
+
+
+    }
+EOF
+fi
+
+               else
+                        echo "/var/cpanel/userdata/$user/$domain does not exit";
+
+                fi
+        done
+done
+

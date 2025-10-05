@@ -1,0 +1,3 @@
+XCache is a open-source opcode cacher, which means that it accelerates the performance of PHP on servers. It optimizes performance by removing the
+compilation time of PHP scripts by caching the compiled state of PHP scripts into the shm (RAM) and uses the compiled version straight from the RAM.
+This will increase the rate of page generation time by up to 5 times as it also optimizes many other aspects of php scripts and reduce serverload.

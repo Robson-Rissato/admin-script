@@ -1,0 +1,8 @@
+NAME='Python';
+VERSION='2.7.3';
+MD5='2cf641732ac23b18d139be077bd906cd';
+EXT='tgz';
+DEPS='gcc gcc-c++ zlib-devel';
+CONFIG='./configure --prefix=/opt/python';
+MAKE='make';
+MAKEINSTALL='make install';

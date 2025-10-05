@@ -1,0 +1,337 @@
+#!/usr/bin/env bash
+
+# last modified 2/26/2025
+
+# this script runs daily so we add tasks that need to run
+
+# add vps's to /etc/backup.conf to do weekly backups on sunday - can be xxx or vpsxxxx
+# add vps's to /etc/blocksmtp.conf to do daily block smtp checks - must start with vpsXXXX
+
+# sanity check
+if [ ! -e /etc/vz -a ! -e /etc/libvirt ]; then
+	echo 'VZ not installed';
+	exit;
+fi
+
+
+export HOME=/root
+export PATH=/sbin:/bin:/usr/sbin:/usr/bin:/usr/games:/usr/local/sbin:/usr/local/bin:/usr/X11R6/bin:/home/quags/bin
+hostname=`hostname`;
+date=`date`;
+
+echo "Running vzconfbackup at $date" >> /var/log/vzconfbackup.log
+
+
+# some rep installed cpanel on a hostnode once
+# this file prevents cpanel from being installed
+# of course it can be removed but I have more faith in the abilities of support
+# to not just remove the file and install it
+# - Famous Last Words <John Quaglieri>
+if [ ! -f /root/installer.lock ]; then
+	touch /root/installer.lock
+fi
+
+# could do sysctl.conf
+if [ -e /proc/sys/net/ipv4/netfilter/ip_conntrack_max ]; then
+	echo 512000 > /proc/./sys/net/ipv4/netfilter/ip_conntrack_max
+	echo 'Raised conntrack max';
+elif [ -e /proc/sys/net/nf_conntrack_max ]; then
+	echo 512000 > /proc/sys/net/nf_conntrack_max
+	echo 'Raised conntrack max';
+else
+	echo 'Did not find conntrack max in /proc';
+fi
+
+/admin/resolvconf
+
+# enable delayed feeds
+# because I have been burned more than fucking once
+if [ -e /etc/sysconfig/kcare/kcare.conf ]; then
+	echo 'Found kcare sysconfig file';
+	kcarecheck=`grep ^PREFIX= /etc/sysconfig/kcare/kcare.conf`;
+	if [ "$kcarecheck" = "" ]; then
+		if [ -e /usr/bin/virsh ]; then
+			echo "PREFIX=48h" >> /etc/sysconfig/kcare/kcare.conf
+			echo 'kvm added 48h prefix';
+		else
+			echo "PREFIX=24h" >> /etc/sysconfig/kcare/kcare.conf
+			echo 'added 24h prefix';
+		fi
+	else
+		echo 'Delayed update prefix already added';
+	fi
+fi
+
+
+#megacli smart
+# thank sun for zfs because we are done with raid cards
+# I have removed the megacli code there should be no more systems running this
+
+if [ -e /root/cpaneldirect/vz.sh ]; then
+        if [ -e /etc/profile.d/ ]; then
+                cp -f /root/cpaneldirect/vz.sh /etc/profile.d/
+        fi
+fi
+
+# fixes
+# should not have /etc/ips, kvm41 fix
+if [ -f /etc/ips ]; then
+	/bin/rm /etc/ips
+fi
+
+# vps.cron
+# this doesn't need to exist any more
+if [ -e /usr/sbin/libvirtd ]; then
+	if [ -f /etc/cron.hourly/vps.cron ]; then
+		/bin/rm -v /etc/cron.hourly/vps.cron
+	fi
+fi
+
+# this should not exist
+if [ -e /etc/cron.daily/vps.cron ]; then
+	/bin/rm -v /etc/cron.daily/vps.cron
+fi
+
+# this was cron apt code I removed it
+# we actually use unattended updates now
+if [ -e /etc/debian_version ]; then
+	if [ ! -d /var/lib/libvirt/autosuspend ]; then
+		mkdir -p /var/lib/libvirt/autosuspend
+	fi
+
+	if [ ! -d /vz/vps/code ]; then
+		if [ ! "$(virsh net-list | grep '^ default')" = "" ]; then virsh net-destroy default && virsh net-undefine default; fi
+	fi
+fi
+
+# backup folder
+if [ ! -e /vz/backup ]; then
+	mkdir -p /vz/backup
+fi
+
+# legacy
+if [ ! -e /backup ]; then
+        mkdir -p /backup
+fi
+
+
+# openvz block
+if [ -e /etc/vz ]; then
+	echo 'Detected OpenVZ';
+
+	# load fuse module
+	modprobe fuse
+
+	if [ -e /usr/bin/locate ]; then
+		echo 'Removing mlocate because it would cause high io';
+		rpm -e mlocate
+	fi
+
+	mkdir -p /backup/etc/vz/
+	mkdir -p /backup/etc/sysconfig/vz-scripts
+	if [ -e /usr/sbin/vzlist ]; then
+		/usr/sbin/vzlist > /backup/vzlist
+	fi
+	rsync -a /etc/vz/ /backup/etc/vz/
+
+	# legacy openvz
+	if [ -d /etc/sysconfig/vz-scripts ]; then
+		rsync -a /etc/sysconfig/vz-scripts/ /backup/etc/sysconfig/vz-scripts/
+	fi
+
+	# virtuozzo7
+	if [ -d /usr/bin/prlctl ]; then
+		mkdir -p /backup/conf/
+		# copy symlinks as files
+		rsync -a -L /etc/vz/conf/ /backup/conf/
+	fi
+
+        if [ -f /root/.swift/config ]; then
+                # swift backups
+	        if [ -f /etc/lvm/backup/vz ]; then
+                        /admin/swift/isbackup /etc/lvm/backup/vz
+                fi
+
+		for i in /etc/vz/ /etc/sysconfig/vz-scripts/ /backup/vzlist; do
+			/admin/swift/isbackup $i
+		done
+
+        else
+                echo "/root/.swift/config does not exist";
+        fi
+
+	test -h /etc/cron.hourly/proc_check.sh && echo "/etc/cron.hourly/proc_check.sh is a symlink" || echo "/etc/cron.hourly/proc_check.sh is a file" && ln -sf /tools/proc_check.sh /etc/cron.hourly/proc_check.sh
+
+# KVM block
+elif [ -e /etc/libvirt ]; then
+	echo 'Detected KVM';
+
+	if [ -f /etc/blocksmtp.conf ]; then
+		echo 'Found /etc/blocksmtp.conf';
+		for vps in `cat /etc/blocksmtp.conf | grep ^vps`; do
+			if [ -x /admin/kvmenable ]; then
+				/admin/kvmenable blocksmtp $vps
+				sleep 1s;
+			fi
+		done
+	fi
+
+	if [ -f /etc/unblocksmtp.conf ]; then
+		for vps in `cat /etc/unblocksmtp.conf | grep ^vps`; do
+			if [ -x /admin/kvmenable ]; then
+                                /admin/kvmenable unblocksmtp $vps
+                                sleep 1s;
+                        fi
+		done
+	fi
+
+	if [ ! -e /sbin/zfs ]; then
+		echo 'Warning KVMv1 is still installed?';
+	else
+		echo 'kvmv2 detected';
+	fi
+
+	/usr/bin/virsh list > /vz/backup/virshlist
+	if [ ! -d /vz/backup/etc_backup ]; then
+		mkdir -p /vz/backup/etc_backup
+	fi
+
+	echo "backing up /etc to /vz/backup/etc_backup";
+	rsync --delete -a /etc/ /vz/backup/etc_backup/
+
+	if [ -f /root/.swift/config ]; then
+		# swift backups
+		for location in /etc/dhcp/dhcpd.conf /etc/dhcp/dhcpd.vps /etc/libvirt /etc/dhcp /etc/dhcpd.conf /etc/dhcpd.vps /vz/backup/virshlist; do
+			if [ -e $location ]; then
+				/admin/swift/isbackup $location
+			fi
+		done
+	else
+		echo "/root/.swift/config does not exist";
+	fi
+fi
+
+if [ -x /scripts/upscripts ]; then
+	/scripts/upscripts
+fi
+
+if [ -x /root/cpaneldirect/upscripts ]; then
+	/root/cpaneldirect/upscripts
+fi
+
+if [ -x /tools/upscripts ]; then
+	/tools/upscripts
+fi
+
+if [ -f /limitpacket ]; then
+	/bin/rm /limitpacket
+fi
+
+#if [ "$1" = "clean" ]; then
+#	for date in 2014 2015 2016 2017 2018 2019 2020; do
+#		for file in $(/admin/swift/isls $hostname | grep ${date}-); do
+#			/admin/swift/isrm $hostname $file
+#		done
+#	done
+#fi
+
+# memory leak ubuntu
+if [ -f /etc/debian_version ]; then for memunit in $(ipcs | grep ^0x | awk '{print $2}'); do ipcrm -s $memunit; done; fi
+
+# kvmv2 mountpoint
+if [ -e /sbin/zfs ]; then
+	mountpoint -q /var/lib/libvirt/qemu/save || zfs create -o mountpoint=/var/lib/libvirt/qemu/save vz/save
+	# data is temporary during reboots only
+	zfs set sync=disabled vz/save
+
+	# ensure snapshots are there
+	if [ ! -e /etc/cron.daily/zfs ]; then
+        	if [ -e /admin/configs/zfs/zfs ]; then
+                	echo "adding zfs symlink";
+                	ln -s /admin/configs/zfs/zfs /etc/cron.daily/zfs
+        	fi
+	fi
+fi
+
+if [ -d /etc/sysctl.d ]; then
+	if [ ! -f /etc/sysctl.d/20-kvm-int.conf ]; then
+		if [ -f /scripts/conf/20-kvm-int.conf ]; then
+			/bin/cp /scripts/conf/20-kvm-int.conf /etc/sysctl.d/20-kvm-int.conf 
+		fi
+	fi
+	systemctl restart systemd-sysctl.service
+fi
+
+# lets do weekly only
+if [ -f /etc/backup.conf ]; then
+	echo 'Found /etc/backup.conf' | tee -a /var/log/vzconfbackup.log
+	date=`date +%u`;
+	#1 - 7 day of week monday is 1
+	if [ "$date" = "7" ]; then
+		# https://lists.openvz.org/pipermail/users/2020-July/007946.html
+		# run weekly
+		# confirmed problem 1/5/2021
+		if [ -f /proc/user_beancounters ]; then
+			echo 2 > /proc/sys/vm/drop_caches
+		fi
+		echo 'Processing /etc/backup.conf' | tee -a /var/log/vzconfbackup.log
+		for vpsid in `cat /etc/backup.conf`;  do
+			if [[ $vpsid =~ ^-?[0-9]+$ ]]; then
+				echo "Backing up $vpsid" | tee -a /var/log/vzconfbackup.log
+				echo
+				sleep 2s;
+				/admin/swift/vpsbackup $vpsid | tee -a /var/log/vzconfbackup.log
+			else
+				echo '/etc/backup.conf returned a non numeric value' | tee -a /var/log/vzconfbackup.log
+			fi
+		done
+	else
+		echo 'Not processing backups today' | tee -a /var/log/vzconfbackup.log
+	fi
+fi
+
+echo >> /var/log/vzconfbackup.log
+
+#add in histtimeformat recommended by denis
+if [ -f /root/.bash_profile -o -f /root/.bashrc ]; then
+	if [ -f /root/.bash_profile ]; then
+		thefile=/root/.bash_profile;
+	elif [ -f /root/.bashrc ]; then
+		thefile=/root/.bashrc;
+	else
+		echo 'Error in histtimeformat: How did I get there';
+		exit;
+	fi
+
+	hcheck=`grep HISTTIMEFORMAT ${thefile}`;
+	if [ "$hcheck" = "" ]; then
+		echo 'Adding histtimeformat';
+		echo 'export HISTTIMEFORMAT="%m/%d/%y %T "' >> ${thefile}
+	else
+		echo 'Histtimeformat is done';
+	fi
+fi
+
+# yum for openvz
+if [ -x /tools/yum ]; then
+	if [ -e /usr/bin/prlctl ]; then
+		/tools/yum
+	fi
+fi
+
+if [ -f /etc/sudoers.d/quags ]; then
+	if [ -d /root/cpaneldirect ]; then
+	        if [ -d /home/quags ]; then
+	                random=`openssl rand -base64 16`;
+        	        if [ ! "$random" = "" ]; then
+				if [ -f /etc/debian_version ]; then
+					echo "root:${random}" | chpasswd
+					echo "random root has been set";
+				else
+                	        	echo $random | passwd --stdin root
+                        		echo "random root has been set";
+				fi
+                	fi
+		fi
+	fi
+fi

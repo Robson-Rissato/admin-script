@@ -1,0 +1,8 @@
+NAME='zziplib';
+VERSION='0.13.49';
+MD5='5f7b88ebb2bcd7e8044328482d079661';
+EXT='tar.bz2';
+DEPS='gcc gcc-c++ patch';
+CONFIG='./configure --prefix=/usr/local';
+MAKE='make';
+MAKEINSTALL='make install';

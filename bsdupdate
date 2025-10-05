@@ -1,0 +1,112 @@
+#!/usr/bin/env bash
+
+# 10/17/2022
+# synth no longer the main update method - the reason is I don't have time for 100+ things to compile per vps
+# it makes sense for rspamd which is why it was added to ensure hyperscan is in use and we need every last bit of
+# cpu optimization for rspamd - but everything else there is no need.  Using just synth on rspamd has 5 packages 
+# to compile at the last test
+#
+# binary update, then pkg update for freebsd. 
+# also supports doing release updates
+# 
+
+if [ ! -f /etc/master.passwd ]; then
+        echo 'Requires freebsd';
+        exit;
+fi
+
+if [ "$1" = "release" ]; then
+        if [ -x /usr/sbin/freebsd-update ]; then
+                if [ "$2" = "" ]; then
+                        echo -n 'enter release version like 12.3: ';
+                        read release;
+                else
+                        release=$2;
+                fi
+                shellcheck=`grep ^root: /etc/passwd  | cut -d: -f7`;
+                if [ "$shellcheck" = "/usr/local/bin/bash" ]; then
+                        echo 'Warning: root shell is /usr/local/bin/bash which is installed through a port recommend change to /bin/csh';
+                        sleep 1;
+                fi
+                freebsd-update -r ${release}-RELEASE upgrade && freebsd-update install
+                exit;
+        fi
+elif [ "$1" = "snap" ]; then
+        if [ -x /usr/sbin/portsnap ]; then
+                portsnap fetch; portsnap update
+        else
+                echo 'Called with snap but /usr/sbin/portsnap is not installed';
+        fi
+elif [ "$1" = "fast" ]; then
+        echo 'fast run';
+elif [ ! "$1" = "" ]; then
+        echo 'Usage ./bsdupdate nothing added OR release|snap|fast';
+        exit;
+fi
+
+
+if [ -x /usr/sbin/freebsd-update ]; then
+        if [ -x /usr/sbin/pkg ]; then
+                if [ -d /var/service/zone-mta ]; then
+			echo 'Locking rspamd for updates';
+			pkg lock rspamd
+
+			if [ ! -x /usr/local/bin/git ]; then
+				echo 'Missing git which ports is moving to - https://wiki.interserver.net/index.php/Git_ports_freebsd_new';
+			else
+				if [ ! -d /usr/ports/.git ]; then
+					echo 'Missing /usr/ports/.git - need to move to git ports - https://wiki.interserver.net/index.php/Git_ports_freebsd_new';
+				else
+					git -C /usr/ports pull --ff-only
+				fi
+			fi
+
+                fi
+
+                if [ -x /usr/local/bin/synth ]; then
+			echo '/usr/local/bin/synth still exists - should be removed';
+                        sleep 1
+                fi
+
+                # admin scripts
+                /admin/upscripts
+                if [ "$1" = "fast" ]; then
+                        echo 'Skipping binary update check';
+                else
+                        # binary updates for ease
+                        echo 'Fetching updates';
+                        freebsd-update fetch
+                        sleep 1
+                        echo 'Running install';
+                        freebsd-update install
+                fi
+
+                # lets stick with stable with pkgs
+                if [ -f /usr/local/etc/pkg/repos/FreeBSD.conf ]; then
+                        echo 'Warn: /usr/local/etc/pkg/repos/FreeBSD.conf exists latest not quarterly is in use. Continuing in 5 seconds';
+                        sleep 5
+                fi
+
+                if [ "$1" = "synth" ]; then
+                        if [ -x /usr/local/bin/synth ]; then
+                                synth upgrade-system
+                        fi
+                else
+                        pkg update
+			pkg upgrade
+                        if [ -d /var/service/zone-mta -o -d /home/zone/zone-mta ]; then
+                                echo 'Ensure rspamd has hyperscan';
+                                sleep 1
+                                /admin/mb/restart_rspamd c
+				sleep 2
+				pkg unlock rspamd
+				echo 'Run /admin/bsdupdate snap - to update portsnap';
+                        fi
+                fi
+        else
+                echo 'pkg not found';
+        fi
+else
+        echo 'freebsd update not found';
+fi
+

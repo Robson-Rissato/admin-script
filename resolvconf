@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+
+if [ -L /etc/resolv.conf ]; then
+	echo 'Symlink detected';
+	/bin/rm -v /etc/resolv.conf
+fi
+
+touch /etc/resolv.conf
+
+if [ -f /etc/master.passwd ]; then
+	if [ -d /var/service ]; then
+		echo 'mb detected';
+		cat > /etc/resolv.conf <<EOF
+search is.cc trouble-free.net interserver.net
+nameserver 127.0.0.1
+nameserver 66.45.251.218
+nameserver 69.10.54.252
+nameserver 64.20.34.50
+nameserver 66.45.228.250
+nameserver 1.1.1.1
+nameserver 8.8.8.8
+EOF
+
+	nslookup test.sed.invaluement.interserver.net &&  chflags schg /etc/resolv.conf
+
+		exit;
+	fi
+
+	if [ ! -x /usr/local/bin/shuf ]; then
+		if [ -x /usr/sbin/pkg ]; then
+			pkg install shuf
+		else
+			echo 'shuf is missing';
+			exit;
+		fi
+	fi
+fi
+random=`shuf -i1-2 -n1`;
+
+echo "choosing $random randomly";
+
+if [ "$random" = "1" ]; then
+
+cat > /etc/resolv.conf <<EOF
+search is.cc trouble-free.net interserver.net
+nameserver 66.45.251.218
+nameserver 69.10.54.252
+nameserver 64.20.34.50
+nameserver 66.45.228.250
+nameserver 1.1.1.1
+nameserver 8.8.8.8
+EOF
+
+else
+cat > /etc/resolv.conf <<EOF
+search is.cc trouble-free.net interserver.net
+nameserver 69.10.54.252
+nameserver 66.45.251.218
+nameserver 64.20.34.50
+nameserver 66.45.228.250
+nameserver 1.1.1.1
+nameserver 8.8.8.8
+EOF
+
+fi
+
+if [ -e /var/cpanel ]; then
+	touch /var/cpanel/resolvsetup
+fi
+
+if [ ! -e /admin/.info ]; then
+	mkdir /admin/.info
+fi
+
+
+if [ -e /proc/user_beancounters ]; then
+	if [ ! -e /etc/rc.d/rc.local ]; then
+		exit;
+	fi
+	echo 'OpenVZ detected';
+	check=`grep ^/admin/resolvconf$ /etc/rc.d/rc.local`;
+	if [ "$check" = "" ]; then
+		echo 'Adding to /etc/rc.d/rc.local for restarts...';
+		echo /admin/resolvconf >> /etc/rc.d/rc.local
+	else
+		echo 'resolvconf already set in /etc/rc.d/rc.local';
+	fi
+fi
+
+touch /admin/.info/.newresolv2

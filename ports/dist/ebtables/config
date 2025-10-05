@@ -1,0 +1,9 @@
+#506742a3d44b9925955425a659c1a8d0  ebtables-v2.0.10-4.tar.gz
+NAME='ebtables';
+VERSION='v2.0.10-4';
+MD5='506742a3d44b9925955425a659c1a8d0';
+EXT='tar.gz';
+DEPS='gcc gcc-c++';
+#CONFIG='./configure --prefix=/opt/etables';
+MAKE='make';
+MAKEINSTALL='make install';

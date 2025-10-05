@@ -1,0 +1,5 @@
+ifplugin Mail::SpamAssassin::Plugin::SendGrid
+  ifplugin Mail::SpamAssassin::Plugin::AskDNS
+    askdns   sendgridrbl.interserver.net A 127.0.0.2
+  endif
+endif

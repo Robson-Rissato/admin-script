@@ -1,0 +1,9 @@
+NAME='mod_rpaf';
+VERSION='0.6';
+MD5='ba2b89274e1dd4c0f96f8d034fa305b1';
+EXT='tar.gz';
+DEPS='gcc-c++';
+CONFIG='/usr/local/apache/bin/apxs -cia mod_rpaf-2.0.c';
+FILES='/usr/local/apache/bin/apxs'
+MAKE='make';
+MAKEINSTALL='';

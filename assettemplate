@@ -1,0 +1,268 @@
+#!/usr/bin/env bash
+
+if [ ! -x "$(command -v smartctl)" ] || [ ! -x "$(command -v ethtool)" ] || [ ! -x "$(command -v lspci)" ] || [ ! -x "$(command -v ipcalc)" ]; then
+    while true; do
+        read -p "The required packages for this script are not installed. Would you like to install them? (y/n) " correct
+        case $correct in
+            [Yy]* )
+            if [[ "$(cat /etc/os-release | grep PRETTY_NAME |  grep -o '".*"' | sed 's/"//g')" =~ ^CentOS.* ]]; then
+                yum -y update;
+                yum -y install smartmontools ethtool pciutils ipcalc > /dev/null 2>&1;
+            elif [[ "$(cat /etc/os-release | grep PRETTY_NAME |  grep -o '".*"' | sed 's/"//g')" =~ ^Stream.* ]]; then
+                yum -y update;
+                yum -y install smartmontools ethtool pciutils ipcalc > /dev/null 2>&1;
+            elif [[ "$(cat /etc/os-release | grep PRETTY_NAME |  grep -o '".*"' | sed 's/"//g')" =~ ^AlmaLinux.* ]]; then
+                yum -y update;
+                yum -y install smartmontools ethtool pciutils ipcalc > /dev/null 2>&1;
+            elif [[ "$(cat /etc/os-release | grep PRETTY_NAME |  grep -o '".*"' | sed 's/"//g')" =~ ^CloudLinux.* ]]; then
+                yum -y update;
+                yum -y install smartmontools ethtool pciutils ipcalc > /dev/null 2>&1;
+            elif [[ "$(cat /etc/os-release | grep PRETTY_NAME |  grep -o '".*"' | sed 's/"//g')" =~ ^Ubuntu.* ]]; then
+                apt update;
+                apt -y install smartmontools ethtool pciutils ipcalc > /dev/null 2>&1;
+            elif [[ "$(cat /etc/os-release | grep PRETTY_NAME |  grep -o '".*"' | sed 's/"//g')" =~ ^Debian.* ]]; then
+                apt update;
+                apt -y install smartmontools ethtool pciutils ipcalc > /dev/null 2>&1;
+            elif [[ "$(cat /etc/os-release | grep PRETTY_NAME |  grep -o '".*"' | sed 's/"//g')" =~ ^FreeBSD.* ]]; then
+                echo "Sorry, FreeBSD not supported.... yet :)";
+                exit;
+            fi
+            break;;
+            [Nn]* ) exit;;
+            * ) echo "Please answer yes or no.";;
+        esac
+    done
+fi
+
+
+printf "\n"
+
+# Get the GPU model if installed
+if [ "$(lspci | grep "NVIDIA" | grep "VGA")" ]; then
+  GPU=$(lspci | grep NVIDIA | grep VGA | awk -F'[][]' '{print $2}');
+  echo "GPU.............: NVIDIA ${GPU}";
+fi
+
+# Get the motherboard model
+mainboard=$(dmidecode -s baseboard-product-name | tail -1)
+echo "Mainboard.......: $mainboard"
+
+# Get the CPU model
+cpu_model=$(cat /proc/cpuinfo | grep "model name" | head -1 | cut -c 14-)
+cpu_sockets=$(lscpu | grep Socket | awk '{print $2}')
+if [ "${cpu_sockets}" -gt 1 ]; then
+    echo "CPU.............: ${cpu_sockets} x ${cpu_model}";
+else
+    echo "CPU.............: ${cpu_model}";
+fi
+
+
+# Get system memory
+memory_type=$(dmidecode -t memory | grep DDR | awk '{print $2}' | head -1)
+memory_freq=$(dmidecode -t memory | grep Speed | grep /s | head -1 | awk '{print $2}')
+if [ -z "$memory_type" ] && [ "${memory_freq:-0}" -gt 4700 ]; then
+  memory_type=DDR5
+fi
+memory_size=$(dmidecode -t 17 | grep -A5 "Memory Device$" | grep Size | grep -v "No Module Installed" | awk '{if ($3 ~ /MB/) print $2/1024; else print $2}' | awk '{sum+=$1} END {print (sum)}' | awk '{print int($0)}')
+memory_count=$(dmidecode -t 17 | grep -E '^[[:space:]]*Size:[[:space:]]*[0-9]+' | wc -l)
+module_size=$(dmidecode -t 17 | grep -A5 "Memory Device$" | grep Size | grep -v "No Module Installed" | awk '{if ($3 ~ /MB/) print $2/1024; else print $2}' | head -1 | awk '{print int($0)}')
+module_type=$(dmidecode -t memory | grep -A19 "Memory Device$" | grep "Type Detail:" | cut -d: -f2 | grep -E "Registered|LRDIMM" | head -1 | sed 's/^ *//' | sed 's/Synchronous Registered (Buffered)/ RDIMM/' | sed 's/Registered (Buffered)/ RDIMM/' | sed 's/Synchronous LRDIMM/ LRDIMM/')
+if [ -z "$module_type" ]; then
+  diff=$(dmidecode -t 17 | awk '/Total Width:/ && $3!="Unknown"{t=$3} /Data Width:/ && $3!="Unknown" && t{print t-$3; exit}')
+  [ "$diff" -eq 8 ] && module_type=" ECC"
+fi
+echo "Memory..........: $memory_type ${memory_freq}MHz ${memory_size}GB (${memory_count} x ${module_size}GB ${memory_freq}MHz${module_type})"
+
+# build device list: start with SMART’s own scan (NVMe → nvmeNn1)
+scan=$(smartctl --scan | sed -E 's@^(/dev/nvme[0-9]+)\b@\1n1@')
+
+# if this is _not_ an HPE Smart Array box, fall back to /dev/sd? → scsi
+if ! lspci | grep -qi 'Smart Array'; then
+  for d in /dev/sd?; do
+    if ! grep -qx "${d}" <(printf '%s\n' "$scan" | awk '{print $1}'); then
+      scan+=$'\n'"$d   -d scsi"
+    fi
+  done
+fi
+
+# extract only the device names from the original scan
+tmp_devs=$(printf "%s" "$scan" | awk '{print $1}')
+
+# HPE SmartArray fallback → probe via /dev/sgN for cciss devices
+if [[ -z "$scan" ]] && lspci | grep -qi 'Smart Array'; then
+  # figure out which sdX holds “/”
+  root_sd=$(findmnt / -o SOURCE -n | sed 's,[0-9]\+,,')
+  # map that to its generic‑SCSI node (sgN)
+  sg_dev=$(basename "$(readlink -f /sys/block/$(basename "$root_sd")/device/scsi_generic/*)")
+  # probe cciss,0–15 and append only the ones that really exist
+  for id in {0..15}; do
+    if smartctl -i -d cciss,$id "/dev/$sg_dev" &>/dev/null && smartctl -i -d cciss,$id "/dev/$sg_dev" | grep -qi 'Device Model'; then
+      scan+=$'\n'"$(printf "/dev/%s   -d cciss,%d" "$sg_dev" "$id")"
+    fi
+  done
+fi
+
+# map any "/dev/nvmeX" entries into the actual namespace device "/dev/nvmeXn1"
+scan=$(printf "%s" "$scan" | sed -E 's@^(/dev/nvme[0-9]+)\b@\1n1@')
+
+# rebuild orig_devs so the main loop picks up the new nvmeXn1 names
+orig_devs=$(printf "%s" "$scan" | awk '{print $1}')
+
+LABEL_WIDTH=16
+FRIENDLY_WIDTH=24
+counter=1
+echo "$scan" | awk '{ print $1, $3 }' | while read dev driver; do
+  # make sure it actually exists (block OR char)
+  if [ ! -e "$dev" ]; then
+    continue
+  fi
+
+  opts="-d $driver"
+
+  # skip removable devices (USB sticks, SD card readers, etc)
+  devbase=$(basename "$dev")
+  if [ -r "/sys/block/$devbase/removable" ] && [ "$(cat /sys/block/$devbase/removable)" -eq 1 ]; then
+      continue
+  fi
+
+  smartctl_output=$(smartctl -a "$dev" $opts 2>/dev/null)
+
+  # skip HBAs (LSI, etc)
+  if smartctl -i "$dev" $opts 2>/dev/null | grep -qE '^Vendor:[[:space:]]*LSI'; then
+    continue
+  fi
+
+  # get raw model; if empty and this is /dev/sd*, retry with ata then sat
+  raw_model=$(echo "$smartctl_output" | grep -iE 'Device Model|Model Number|Product' | cut -d: -f2 | xargs)
+  if [ -z "$raw_model" ] && [[ "$dev" =~ ^/dev/sd ]]; then
+    opts="-d ata"
+    raw_model=$(echo "$smartctl_output" | grep -iE 'Device Model|Model Number|Product' | cut -d: -f2 | xargs)
+    if [ -z "$raw_model" ]; then
+      opts="-d sat"
+      raw_model=$(smartctl -a "$dev" $opts 2>/dev/null | grep -iE 'Device Model|Model Number|Product' | cut -d: -f2 | xargs)
+    fi
+  fi
+  [ -z "$raw_model" ] && continue
+
+  # serial
+  serial=$(echo "$smartctl_output" | awk -F: '/[Ss]erial [Nn]umber/ {print $2; exit}' | xargs)
+
+  # health checks
+  count=$(echo "$smartctl_output" | grep -iE 'Reallocate|Uncorrectable|Pending_Sector|Integrity Errors:' | awk '{print $NF}' | paste -sd+ - | bc)
+  count=${count:-0}
+  perc=$(echo "$smartctl_output" | grep -i 'Percentage Used:' | awk '{print $3}' | tr -d '%')
+  perc=${perc:-0}
+  tbw=$(echo "$smartctl_output" | grep -i 'Data Units Written:' | grep -oi 'PB' | head -1)
+  tbw=${tbw:-none}
+  if (( count != 0 )) || (( perc > 85 )) || [[ $tbw != none ]]; then
+    health="[FAILED]"
+  else
+    health=""
+  fi
+
+  # size & type
+  size=$(echo "$smartctl_output" | grep Capacity | awk '{gsub(/\[|\]/, ""); printf("%d%s\n", int($5), $6)}' | head -1);
+  # detect SSD vs HDD
+  if echo "$smartctl_output" | grep -qE 'Rotation Rate:.*Solid State Device'; then
+    type=SSD
+  elif echo "$smartctl_output" | grep -qE 'Rotation Rate:.*[0-9]+ rpm'; then
+    type=HDD
+  else
+    # fallback for ata/sat drivers
+    type=$(echo "$smartctl_output" | grep -oE 'SSD|NVMe' | tail -1)
+  fi
+
+  # friendly name
+  case "$raw_model" in
+    CT2000T700SSD*)   friendly="Crucial T700 2TB Gen5 NVMe"            ;;
+    CT*|Crucial*)     friendly="Crucial $size $type"            ;;
+    Micron*1100*)     friendly="Micron 1100 $size $type"             ;;
+    Micron*5200*MTFDDAK3T8TDC*)     friendly="Micron 5200 3.84TB SATA SSD";;
+    Micron*)          friendly="Micron $size $type"             ;;
+    ST*)              friendly="Seagate $size HDD"              ;;
+    AREX3840S5xnFTRI*|AREA3840S5xnFTRI*|AREX3840S5xnNTRI|MZILS3T8HCJM/003*|AREA3840S5xnNTRI|P1633N38*EMC3840*|PA33N3T8*EMC3840*)
+                      friendly="Samsung PM1633 3.84TB SAS SSD"   ;;
+    SAMSUNG*MZQL23T8HCLS*)friendly="Samsung PM9A3 3.84TB NVMe U.2" ;;
+    SAMSUNG*MZ7LM3T8HMLP*)friendly="Samsung PM863a 3.84TB SATA SSD" ;;
+    SAMSUNG*MZ7LM1T9HMJP*)friendly="Samsung PM863a 1.92TB SATA SSD" ;;
+    SAMSUNG*MZ7LH3T8HMLT*|SAMSUNG*MZ7LM3T8HCJM-0E003*)friendly="Samsung PM883 3.84TB SATA SSD" ;;
+    MZILT3T8HALS0D3*|P043S3T8*EMC3840*)friendly="Samsung PM1643 3.84TB SAS SSD" ;;
+    AREA7680S5xnNTRI*|PA33N7T6*EMC7680*)friendly="Samsung PM1633a 7.68TB SAS SSD" ;;
+    MZILS15THMLS*)friendly="Samsung PM1633a 15.36TB SAS SSD" ;;
+    MZXLR3T8HBLS-000H3*)friendly="Samsung PM1733 3.84TB U.3 NVMe" ;;
+    WUSTVA138BSS200*|MZILS3T8HMLH0D3*)friendly="Dell 3.84TB 12Gbps SAS SSD" ;;
+    SDLL1MLR038TCDA1*)friendly="HGST Ultrastar SS200 3.84TB SAS SSD" ;;
+    SLR5E-M3R8SS*)friendly="HGST Ultrastar SS300 3.84TB SAS SSD" ;;
+    PX05SRB384Y*)friendly="Dell Ent Plus 3.84TB SAS SSD" ;;
+    KCD6XLUL7T68*)    friendly="Kioxia 7.68TB NVMe SSD"          ;;
+    KCD6XLUL15T3*)    friendly="Kioxia CD6-R 15.36TB NVMe SSD"          ;;
+    X357_TPM4V3T8AME*|X356_S163A3T8ATE*)friendly="NetApp 3.84TB SAS SSD"          ;;
+    DOPM3840S5xnNMRI*)friendly="HP 3PAR 3.84TB SAS SSD"          ;;
+    WDC*)             friendly="Western Digital $size $type"     ;;
+    *)                friendly="$raw_model"                     ;;
+  esac
+
+  # assemble a label with just “Disk N”, auto-dot-fill to LABEL_WIDTH
+  label="Disk $counter"
+  dots=$(( LABEL_WIDTH - ${#label} ))
+  (( dots<1 )) && dots=1
+  # now print: label+dots, friendly padded to FRIENDLY_WIDTH, then SN/health
+  printf "%s%s: %-${FRIENDLY_WIDTH}s SN:%s %s\n" "$label" "$(printf '%*s' "$dots" '' | tr ' ' '.')" "$friendly" "$serial" "$health"
+  ((counter++))
+done
+
+
+# Check if the system uses software RAID
+
+if [ -x "$(command -v zpool)" ]; then
+    raid_type=$(lsblk | grep raid | grep -w / | awk '{print $(NF-1)}' |  head -1 | cut -c 5-)
+    raid="Software RAID $raid_type + ZFS"
+elif ls /dev/md* &>/dev/null; then
+    raid_type=$(mdadm --detail /dev/md* 2>/dev/null | grep 'Raid Level' | head -1 | awk '{print $4}' | cut -c 5-)
+    raid="Software RAID $raid_type"
+else
+    raid="No RAID"
+fi
+echo "RAID............: $raid"
+
+
+# Get operating system
+test -f /etc/os-release && os=$(cat /etc/os-release | grep PRETTY_NAME |  grep -o '".*"' | sed 's/"//g')
+test -f /etc/redhat-release && os=$(cat /etc/redhat-release)
+echo "OS..............: $os"
+
+
+# Print Control Panel
+if [ -e /usr/local/cpanel/cpanel.lisc ]; then
+    echo "Control Panel...: cPanel/WHM"
+elif [ -d /usr/local/directadmin ]; then
+    echo "Control Panel...: Direct Admin"
+elif [ -d /var/webuzo ]; then
+    echo "Control Panel...: Webuzo"
+else
+    echo "Control Panel...: No Control Panel"
+fi
+
+
+# Print IP block
+ipblock=$(ip addr | grep inet | grep / | grep global | awk '{print $2}' | head -n 1 | cut -d"/" -f2)
+hostcount=$(ipcalc 0.0.0.0/${ipblock} | awk -F: '/Hosts\/Net/ {print $2}' | awk '{print $1}' | xargs)
+usable=$(( hostcount > 0 ? hostcount - 1 : 0 ))
+# singular vs plural
+if (( usable == 1 )); then
+  echo "IPs.............: 1 Vlan IP (/$ipblock)"
+else
+  echo "IPs.............: $usable Vlan IPs (/$ipblock)"
+fi
+
+
+
+# Print VLAN info
+nic=$(ip addr | grep "state UP" | awk '{print $2}' | cut -d: -f1 | head -1)
+speed=$(ethtool $nic | grep Speed | awk '{print $2}' |  sed 's/Mb\/s//' | awk '{print $1/1000}')
+if [ "$speed" -eq 1 ]; then
+  echo "Bandwidth.......: ${speed}GBPS Unmetered"
+else
+  echo "Bandwidth.......: 1GBPS (${speed}GB Port)"
+fi
+printf "\n"

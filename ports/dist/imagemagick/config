@@ -1,0 +1,11 @@
+#780da797aa684a37f7a875f380524067  ImageMagick-6.8.2-10.tar.gz
+NAME='ImageMagick';
+VERSION='6.8.2-10';
+MD5='780da797aa684a37f7a875f380524067';
+EXT='tar.gz';
+DEPS='gcc gcc-c++ bzip2-devel freetype-devel libjpeg-devel libpng-devel libtiff-devel libungif-devel zlib-devel freetype-devel automake autoconf libtool';
+CONFIG='./configure --prefix=/opt/imagemagick --enable-shared --with-perl --with-threads --with-magick_plus_plus';
+MAKE='make';
+MAKEINSTALL='make install';
+FILES='/usr/bin/perl';
+DIRNAME='ImageMagick-6.8.2-10';

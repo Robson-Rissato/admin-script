@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+
+if [ ! -d /usr/local/directadmin ]; then
+	echo 'Requires directadmin';
+	exit;
+fi
+
+if [ ! "$1" = "force" ]; then
+	echo 'Mist run with ./fixlisc force';
+	exit;
+fi
+
+ip=`/usr/sbin/ip -4 addr show eth0 | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | head -n 1`;
+ip2host=`echo $ip | tr "." "-"`;
+echo "Using hostname server-$ip2host.da.direct";
+sleep 3s;
+if [ -x /usr/local/directadmin/scripts/hostname.sh ]; then
+        /usr/local/directadmin/scripts/hostname.sh server-$ip2host.da.direct
+        if [ -f /etc/machine-id ]; then
+          if [ -x /usr/bin/systemd-machine-id-setup ]; then
+           /bin/rm -v /etc/machine-id; /usr/bin/systemd-machine-id-setup
+          fi
+        fi
+        hostname server-$ip2host.da.direct
+        echo server-$ip2host.da.direct > /etc/hostname
+        /bin/rm -v /usr/local/directadmin/conf/cacert.pem  /usr/local/directadmin/conf/carootcert.pem /usr/local/directadmin/conf/cakey.pem
+        systemctl stop directadmin
+        systemctl start directadmin
+        da license
+        sleep 1s;
+        if [ -x /usr/local/directadmin/scripts/letsencrypt.sh ]; then
+                da build rewrite_confs
+                /usr/local/directadmin/scripts/letsencrypt.sh request_single server-$ip2host.da.direct
+                if [ "$ovz" = "1" ]; then
+                  chattr +i /etc/hostname
+                fi
+        else
+                echo 'Missing /usr/local/directadmin/scripts/letsencrypt.sh';
+        fi
+else
+        echo 'Missing /usr/local/directadmin/scripts/hostname.sh';
+fi
+

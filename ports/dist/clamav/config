@@ -1,0 +1,10 @@
+NAME='clamav';
+VERSION='0.99';
+MD5='ae79c3982761ba1815dbce17f846bab6';
+EXT='tar.gz';
+DEPS='gcc gcc-c++ zlib-devel curl-devel gmp-devel bzip2-devel';
+CONFIG='./configure --enable-experimental --prefix=/usr/local --enable-dns --enable-libcurl --disable-clamav --enable-id-check --with-user=clamav --with-group=clamav --disable-zlib-vcheck --enable-bigstack';
+MAKE='make';
+MAKEINSTALL='make install';
+PRE='setup.sh'
+LDCONFIG=1

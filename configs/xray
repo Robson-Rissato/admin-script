@@ -1,0 +1,9 @@
+#!/bin/bash
+
+if [ -x /usr/sbin/lvectl ]; then
+
+	yum -y install lvemanager --enablerepo=cloudlinux-updates-testing
+	rhn_check
+	yum -y install lvemanager alt-php-xray --enablerepo=cloudlinux-updates-testing
+
+fi

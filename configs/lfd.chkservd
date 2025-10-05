@@ -1,0 +1,1 @@
+service[lfd]=x,x,x,/usr/sbin/csf -r;service lfd restart,lfd,root

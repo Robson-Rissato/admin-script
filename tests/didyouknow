@@ -1,0 +1,40 @@
+Cpanel Domain ownership in cpanel will look to permissions on /etc/valiases/domain.com in some cases. Wrong ownership on this file may make the domain appear to be owned by another user.
+Directadmin rewrite_confs is extremely slow. To just run a single rebuild of a user user /admin/res httpd username
+Directadmin can be debugged with systemctl stop directadmin; /usr/local/directadmin/directadmin b2000
+Webuzo uses epel rpm repo for exim. If exim can not install check this repo is active
+kvm systems may have queue runner hang if there is a screen called backup created
+zfs if file system is extremely slow check if the disk space is over 96%. This is for a USER dataset as well.
+Openlitespeed and wp-rocket are not compatible and will result in a file download https://github.com/wp-media/wp-rocket/issues/2409
+Storage directadmin systems do not have dns servers built in. Use cdns1/cdns2/cdns3
+kvm and openvz vps can use /etc/backup.conf on the hostnode with the vps id in the format of xxxxxx to run weekly auto backups into swift
+kswapd0 may use a lot of CPU if ram is low but also is commonly a hidden malware process. A real kswapd0 command is a kernelthread not a file being run
+ksoftirqd high CPU may indicate a flood/dosttack or other high network activity
+out of space errors could be also caused by inodes full. Check df -i or quota -u username if df does not report out of space
+QVO model drives will randomly go slow. If any are detected they must be replaced.
+If letsencrypt is ratelimited try the alternative zerossl provider
+503 errors can be due to inode limit reached, cpu/mem reached or imunify360 more info in wiki under 503 errors
+to check an ip blacklist status use https://mxtoolbox.com/blacklists.aspx
+firewalld may default to blocking incomming connections. On cpanel/WHM systems replace with csf firewall
+csf firewall is unreliable on virtuozzo7 systems and may fail to start
+csf firewall can use CC_DENY to block countries like CN,RU and also can use country level blocks on a single port. check /etc/csf/csf.conf
+on kvm pmsuspended is not a virsh suspend call but a power management suspend from the os itself - to wake up call virsh dompmwakeup vpsXXX
+ipv6 local address start with fe80 where as of this writing publically accessible ipvs start with 2604 in our network
+if ipv6 check fails some wget calls will fail or time out if wget defaults to trying ipv6 first. yum can have the same issue
+if a domain on directadmin has a wildcard cert installed like a cloudflare cert that cert will be used for port 2222
+you can test a php file like you are calling a website using strace: strace -y -tt -s1024 -u nurjahan -E HTTP_HOST=nurjahangroup.com -E REQUEST_URI=/ php index.php 2>&1| less
+srs forwarding changes in cpanel v108. If forwarding is not working or return path is not set check the exim smart host config
+you can reduce disk space quickly on cpanel using the admin scripts configs/clean_system.sh or on directadmin storage/clean_system.sh
+cpanel webmail or phpmyadmin just spinning? cpanel internal phpfpm may be at max connections
+run directadmin awstats for a user using /usr/local/directadmin/scripts/awstats_process.sh user domain.com
+admin scripts have moved some directadmin commands to a cli. run /admin/storage/da to see all the commands
+large systems that run as vms like webhosting systems can get slow on large backup restores due to removing useful disk cache. nocache command can resolve this.
+80% usage on disk and ram should always be the max used. This gives room for spikes.
+Getting geoip is not compiled in mod security on directadmin? Install the geoip dev/devel from apt or yum and rebuild modsecurity
+To chown a symlink call chown with -h - -h, --no-dereference affect each symbolic link instead of any referenced file (useful only on systems that can change the ownership of a symlink)
+If Account daemon is using 100% cpu you may need to rotate /var/log/wtmp - search wiki for Account-daemon
+If pkg commands are slow on freebsd check if ipv6 is bound but not working - in that case it will wait to time out
+A slow slog device in zfs will lead to high load - test with /admin/benchmark disk
+xfs_quota on large file systems may time out. It is best over 1TB to run xfs_growfs after rebooting the system and it is online
+if virt-rescue shows errors like error: udev not found  Things will probably not work or guestfsd: error while loading shared libraries: libsqlite3.so.0 and apt update may be running
+cpanel webmail not logging in? Check cpanel php max children or restart cpanel css the calendar
+If rewrite_confs hangs with a lock file a .bashrc under that user maybe causing the issue

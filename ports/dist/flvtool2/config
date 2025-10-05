@@ -1,0 +1,10 @@
+NAME='flvtool2';
+VERSION='1.0.6';
+MD5='08e5f6f10c06903447d97d7ba10cec67';
+EXT='tgz';
+DEPS='gcc gcc-c++';
+FILES='/usr/local/bin/ruby:ruby';
+CONFIG='/usr/local/bin/ruby setup.rb config';
+MAKE='/usr/local/bin/ruby setup.rb setup';
+MAKEINSTALL='/usr/local/bin/ruby setup.rb install';
+DIRNAME='flvtool2-1.0.6';

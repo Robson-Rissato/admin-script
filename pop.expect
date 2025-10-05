@@ -1,0 +1,35 @@
+#!/usr/bin/expect --
+
+set login [lindex $argv 0]
+set pass [lindex $argv 1]
+
+if {$login == ""} {
+        puts "Usage ./pop.expect login pass"
+        exit
+}
+
+if {$pass == ""} {
+        puts "Usage ./pop.expect login pass"
+        exit
+}
+
+
+set timeout 20
+spawn telnet localhost 110
+
+expect "+OK" {
+        send "user $login\r"
+}
+
+expect "+OK" {
+        send "pass $pass\r"
+}
+
+expect "+OK" {
+        send "quit\r"
+}
+
+expect done {
+        puts "done!\n";
+}
+

@@ -1,0 +1,15 @@
+NAME='mplayer';
+#VERSION='26401';
+VERSION='27332';
+#MD5='4972d34eed336963c3d877793bdad580';
+MD5='12e07dd3e19c8e4bde5151118e3f9f98';
+EXT='tgz';
+DEPS='gcc gcc-c++';
+CONFIG='./configure --disable-dvdnav --disable-dvdread --disable-dvdread-internal --disable-libdvdcss-internal --disable-smb --disable-arts --win32codecsdir=/usr/local/lib/codecs --enable-tv-v4l2 --disable-liblzo --enable-largefiles  --disable-libdv --disable-aa --enable-runtime-cpudetection --enable-dynamic-plugins --language=all';
+MAKE='make';
+MAKEINSTALL='make install';
+#DIRNAME='mplayer-26401';
+DIRNAME='mplayer-27332';
+PRE='installmplayercodecs'
+FILES='/usr/local/lib/libamrnb.so.3.0.0:amrnb /usr/local/lib/libamrwb.so.3.0.0:amrwb';
+LDCONFIG=1

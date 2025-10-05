@@ -1,0 +1,57 @@
+#!/bin/bash
+
+if [ ! -d /usr/local/lsws ]; then
+        exit;
+fi
+
+if [ ! -d /usr/local/cpanel ]; then
+	exit;
+fi
+
+if [ ! -x /usr/bin/sudo ]; then
+	exit;
+fi
+
+cd /var/cpanel/users
+for i in *; do
+        homedir=$(grep ^$i: /etc/passwd | cut -d: -f6);
+        if [ "$homedir" = "" ]; then
+                continue;
+        fi
+
+        if [ "$i" = "system" ]; then
+                continue;
+        fi
+        if [ -d ${homedir} ]; then
+                if [ ! -d $homedir/lscache ]; then
+                        echo "$homedir/lscache does not exist"
+			sudo -u $i mkdir $homedir/lscache
+                fi
+
+		if [ -f /opt/cpanel/ea-php71/root/etc/phpint.ini ]; then
+			if [ -d $homedir/.cagefs ]; then
+				if [ -f $homedir/.usemmdrop ]; then
+					if [ ! -d $homedir/.cagefs/phpmmdrop ]; then
+						echo "$homedir/.cagefs/phpmmdrop does not exist"
+						mkdir $homedir/.cagefs/phpmmdrop
+						chown nobody:nobody $homedir/.cagefs/phpmmdrop
+					fi
+				fi
+			fi
+		fi
+	fi
+done
+
+if [ -f /opt/cpanel/ea-php71/root/etc/phpint.ini ]; then
+	if [ ! -e /opt/alt/php56/usr/lib64/php/modules/suhosin.so ]; then
+		yum -y install alt-php56-suhosin
+	fi
+
+	if [ ! -e /opt/alt/php55/usr/lib64/php/modules/suhosin.so ]; then
+		yum -y install alt-php55-suhosin
+	fi
+
+	if [ ! -e /usr/share/GeoIP/GeoIP.dat ]; then
+		yum -y install GeoIP
+	fi
+fi

@@ -1,0 +1,31 @@
+#!/bin/bash 
+
+if [ ! -e /usr/local/cpanel ]; then
+	exit;
+fi
+
+if [ ! -d /admin/configs/cpanel ]; then
+	exit;
+fi
+
+if [ ! -f /root/.swift/config ]; then
+	exit;
+fi
+
+if [ ! -d /usr/local/lsws ]; then
+	exit;
+fi
+
+if [ -x /admin/configs/cpanel/enablerbl ]; then
+	if [ ! -f /var/cpanel/rbl_info/interserver.yaml ]; then
+		/admin/configs/cpanel/enablerbl
+	fi
+fi
+
+if [ -e /var/cpanel/webtemplates/root ]; then
+	exit;
+fi
+
+echo 'Making templates';
+mkdir -p /var/cpanel/webtemplates/root
+/bin/cp -a /admin/configs/cpanel/english /var/cpanel/webtemplates/root

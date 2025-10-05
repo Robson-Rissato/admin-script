@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+
+if [ ! -d /var/service ]; then
+	echo 'Missing /var/service';
+	exit;
+fi
+
+if [ ! -f /var/log/zonemta.log ]; then
+	echo 'Missing /var/log/zonemta.log';
+	exit;
+fi
+
+if [ "$1" = "" ]; then
+	echo 'To restart add ./checkzone restart or add fast to skip ram space and load';
+	sleep 1
+
+elif [ "$1" = "restart" ]; then
+	echo 'Restarting node and waiting 10 seconds';
+	killall node
+	sleep 10;
+	echo
+else
+	echo
+fi
+
+if [ "$1" = "fast" ]; then
+	echo 'Skipping ram, space and load';
+else
+	echo 'Space';
+	df /
+	sleep 2;
+	echo
+
+	echo 'Load';
+	w
+	sleep 2;
+	echo
+
+	echo 'Ram';
+	/admin/mb/free
+	sleep 2;
+	echo
+
+	echo 'Checking config';
+	/admin/mb/restart_rspamd c
+	echo
+fi
+
+echo 'Testing spf';
+if [ -f /home/zone/zone-mta-template/./node_modules/python-spfcheck2/spfcheck2.py ]; then
+	/usr/local/bin/python3 /home/zone/zone-mta-template/./node_modules/python-spfcheck2/spfcheck2.py 69.55.226.139 terry@wayforward.net mx1.wayforward.net
+	sleep 2;
+else
+	echo 'Error: /home/zone/zone-mta-template/./node_modules/python-spfcheck2/spfcheck2.py';
+fi
+echo
+
+for check in apitxtlockdown zonemta-limiter-fork queueroute mailbabydkimhost interserver-xauthuser-add interserver-xauth-ratelimit interserver-log2 interserver-log interserver-greylisttomailchannels deferedtomailchannels authplugin; do
+	echo "Looking for $check plugin"
+	tail -n 45000 /var/log/zonemta.log | grep $check | grep Initialized | tai64nlocal | tail -n 2
+	sleep 2;
+	echo
+done
+
+echo 'checking for crashes in node';
+tail -n 100000 /var/log/zonemta.log | egrep -i "Uncaught exception|LIFECYCLE" | tai64nlocal
+sleep 2;
+
+echo 'checking dropped emails in greylist';
+tail -n 100000 /var/log/zonemta.log | grep -i DROPPING | grep -v "cron" | grep -v INVALID | tai64nlocal
+sleep 2;
+
+
+echo 'done. checking port 25 in 5 seconds';
+sleep 5;
+
+lsof -i :25
+echo

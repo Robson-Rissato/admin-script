@@ -1,0 +1,12 @@
+#!/bin/bash
+
+echo -n "Randomly Generated password: "
+/admin/randompass
+echo
+if [ -x /opt/lsws/admin/misc/admpass.sh ]; then
+	/opt/lsws/admin/misc/admpass.sh
+elif [ -x /usr/local/lsws/admin/misc/admpass.sh ]; then
+	/usr/local/lsws/admin/misc/admpass.sh
+else
+	echo 'Litespeed not installed, or not at default location.';
+fi

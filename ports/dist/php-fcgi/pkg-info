@@ -1,0 +1,26 @@
+for PHP don't forget to set cgi.fix_pathinfo = 1 in the php.ini
+
+You may want to run:
+
+mkdir -p /etc/lighttpd && cp -f /usr/share/doc/lighttpd-1.4.13/lighttpd.conf /etc/lighttpd
+
+A lighttpd virtual host may look like
+
+$SERVER["socket"] == "66.45.243.126:80" {
+        server.document-root = "/home/cute/public_html/126"
+}
+
+
+The fastcgi section may look like
+
+fastcgi.server             = ( ".php" =>
+                               ( "localhost" =>
+                                 (
+                                   "socket" => "/tmp/php-fastcgi.socket",
+                                   "bin-path" => "/usr/local/bin/php"
+                                 )
+                               )
+                            )
+
+
+

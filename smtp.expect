@@ -1,0 +1,62 @@
+#!/usr/bin/expect --
+
+set to [lindex $argv 0]
+set server [lindex $argv 1]
+
+if {$to == ""} {
+        puts "Usage ./smtp.expect TO FQDN/ip"
+        exit
+}
+
+if {$server == ""} {
+        puts "Usage ./smtp.expect TO FQDN/ip"
+        exit
+}
+
+
+set timeout 20
+spawn telnet $server 25
+
+expect "220*" {
+	sleep 1
+        send "HELO trouble-free.net\r"
+}
+
+expect "250" {
+        send "mail from: <nobouce@trouble-free.net>\r"
+}
+
+expect "250" {
+        send "rcpt to: $to\r"
+}
+
+expect  { 
+
+	"250" {
+        	send "data\r"
+	}
+
+	"500" {
+		puts "	ERROR\n"
+		exit
+	}
+
+	"550" {
+		puts "	RELAYING IS DENIED\n"
+		exit
+	}
+}
+
+expect "354" {
+		send "test\r"
+		send ".\r"
+	}
+
+expect "250" {
+		send "quit\r"
+	}
+
+expect done {
+        	puts "done!\n";
+}
+

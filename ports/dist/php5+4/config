@@ -1,0 +1,10 @@
+NAME='php';
+VERSION='5.2.1';
+MD5='604eaee2b834bb037d2c83e53e300d3f';
+EXT='tar.gz';
+DEPS='gcc gcc-c++ patch';
+CONFIG='./configure --with-apxs=/usr/local/apache/bin/apxs --with-xml --enable-bcmath --enable-calendar --with-curl --enable-ftp --with-gd --with-jpeg-dir=/usr/local --with-png-dir=/usr --with-xpm-dir=/usr/X11R6 --with-gettext --enable-memory-limit --enable-magic-quotes --with-mysql=/usr --enable-discard-path --with-pear --enable-sockets --enable-track-vars --with-ttf --with-freetype-dir=/usr --enable-gd-native-ttf --enable-versioning --with-zlib --with-config-file-path=/usr/local/php5 --prefix=/usr/local/php5 --with-mysqli';
+MAKE='make';
+MAKEINSTALL='make install';
+FILES='/usr/local/bin/php /usr/bin/php /usr/local/apache/bin/apxs';
+PATCH='p1:php-5.2.0-sapi.patch:1c395de98ab3dc91288a681d769fe043'

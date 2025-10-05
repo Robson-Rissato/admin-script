@@ -1,0 +1,52 @@
+#!/bin/sh
+
+if [ "$1" = "" ]; then
+	echo 'Usage ./swap #';
+	echo 'Enter space in MB';
+	exit;
+fi
+
+if [ ! -x /usr/bin/bc ]; then
+	echo 'missing /usr/bin/bc';
+	exit;
+fi
+
+
+space="$(echo "$1 * 1024" | bc -l)";
+
+if [ "$space" = "" -o "$space" = "0" ]; then
+	echo 'Error: non numeric value entered?';
+	exit;
+fi
+
+if [ "$1" -gt 1500 ]; then
+	echo 'A value greater than 1500 has been entered, are you certain you have enough space and want to continue?';
+	echo -n '[y/n]';
+	read wait
+	if [ ! "$wait" = "y" ]; then
+		echo 'Bye!';
+		exit;
+	fi
+fi
+
+if [ -e /home/swapfile ]; then
+	echo 'Error: /home/swapfile exists';
+	exit;
+fi
+
+dd if=/dev/zero of=/home/swapfile bs=1024 count=$space
+/sbin/mkswap /home/swapfile
+chmod 600 /home/swapfile
+/sbin/swapon /home/swapfile
+
+if [ -e /etc/rc.d/rc.local ]; then
+	if [ "$(grep "^/sbin/swapon /home/swapfile$" /etc/rc.d/rc.local)" = "" ]; then
+		echo "/sbin/swapon /home/swapfile" >> /etc/rc.d/rc.local
+	fi 
+elif [ -e /etc/conf.d/local.start ]; then
+	if [ "$(grep "^/sbin/swapon /home/swapfile$" /etc/conf.d/local.start)" = "" ]; then
+                echo "/sbin/swapon /home/swapfile" >> /etc/conf.d/local.start
+        fi
+else
+	echo 'You must run /sbin/swapon /home/swapfile on bootup to readd the swap space';
+fi

@@ -1,0 +1,450 @@
+#!/usr/bin/env bash
+
+# if /usr/sbin/zfs-auto-snapshot is installed we default to that
+
+# touch /admin/.info/manualsnapshots to run snapshots when it is not cpanel/da or kvm
+
+# touch /admin/.info/_nosnapshotsatall to skip snapshots
+
+# touch /vz/${checkforqs}/_skipthird to skip third snapshot
+# touch /vz/qsXXX/_nosnapshotsatall - to skip all snapshots for running qs
+
+# vz as the pool is default but we also support secondary as an additional pool
+
+if [ -f /dev/shm/lock ]; then
+	echo 'Exiting out due to /dev/shm/lock';
+	exit;
+fi
+
+# these are for email settings
+HOSTNAME=`hostname`;
+DATE=`date`;
+EMAIL=zfs\@interserver.net;
+DEBUG=0;
+maxload=30;
+
+#internal variables do not change
+RENAME=0;
+CREATE=0;
+DESTROY=0;
+
+
+# need to work on ubuntu + smtp mailing
+if [ -x /usr/local/bin/mailx ]; then
+	MAILX_PATH="/usr/local/bin/mailx";
+elif [ -x /usr/bin/bsd-mailx ]; then
+        MAILX_PATH="/usr/bin/bsd-mailx";
+elif [ -x /bin/mailx ]; then
+        MAILX_PATH="/bin/mailx";
+elif [ -x /usr/bin/mailx ]; then
+        MAILX_PATH="/usr/bin/mailx";
+else
+        echo '!! MAILX could not be found !!';
+fi
+
+# this can be moved to common bash functions
+# check exist status
+function didwecomplete()
+{
+
+        # if we get a non zero/non 1 run with the above command we need to exit out of this loop and send an error
+        did_we_complete=$(echo $?);
+
+        #echo "returned $did_we_complete";
+
+        if [ ! "$did_we_complete" = "0" -a ! "$did_we_complete" = "1" ]; then
+                echo
+                echo 'command did not complete successfully';
+                exit;
+        fi
+
+
+
+}
+
+function send_mail()
+{
+        #echo "$@"
+	if [ "$DEBUG" = "1" ]; then
+		echo "mailx ${MAILX_PATH} hostname $HOSTNAME date $DATE email $EMAIL"
+	fi
+        echo -e "$@" | ${MAILX_PATH} -r root@is.cc -s "$HOSTNAME zfs error at $DATE" $EMAIL
+
+}
+
+# check for zfs first
+if [ ! -e /sbin/zfs -a ! -e /opt/zfs/sbin/zfs ]; then
+        echo 'Requires ZFS';
+        exit;
+fi
+
+if [ -e /opt/zfs/sbin ]; then
+	export PATH=/opt/zfs/sbin/zfs:$PATH
+fi
+
+# on all our set ups we have one pool only
+poolnames=`zpool list -H -o name`;
+
+if [ "$poolnames" = "" ]; then
+        echo 'Error no pool name returned';
+        exit 1;
+fi
+
+if [ "$DEBUG" = "1" ]; then
+	echo "Debug mode enabled we will NOT be running any actual commands for snapshots";
+	echo "Poolnames ${poolnames}";
+	sleep 1;
+	
+fi
+
+pcount=`echo -n "$poolnames" | grep -c '^'`;
+if [ "$DEBUG" = "1" ]; then
+	echo "Total pools $pcount";
+	sleep 1;
+fi
+
+health=$(zpool status -x)
+didwecomplete;
+if [ ! "$health" = "all pools are healthy" ]; then
+        echo 'Did not return all pools are healthy sending error';
+        send_mail "returned error $health"
+else
+	if [ "$DEBUG" = "1" ]; then
+		echo "All pools are healthy";
+		sleep 1;
+	fi
+fi
+
+if [ "$1" = "mailtest" ]; then
+        send_mail "testing alert $HOSTNAME"
+        echo 'Sent test mail';
+        exit;
+fi
+
+# when run with anything exit out for testing and monitoring
+if [ ! "$1" = "" ]; then
+        zfs list -t snapshot -o name,used,creation; zpool status; zpool list
+        echo 'Exiting out of spapshot mode';
+        exit;
+fi
+
+echo 'Sleeping for 5 seconds before starting';
+sleep 5;
+
+for poolname in $poolnames; do
+	if [ "$DEBUG" = "1" ]; then
+		echo "Working on pool $poolname";
+		sleep 1;
+	fi
+	cap=$(zpool list -H -p -o capacity $poolname);
+	didwecomplete;
+	# I do not want stats unless sending an email
+	if [ -f /admin/.info/_95 ]; then
+		if [ "$cap" -gt "95" ]; then
+			echo 'Zpool is too full not continuing commands and sending an email';
+			stats=`zpool  list; df -m | grep /vz;zfs list -t snapshot;lastlog -t 10`;
+			send_mail "pool is too full at $cap\n $stats"
+			/admin/configs/zfssnapclean all
+	                continue;
+		fi
+	else
+		if [ "$cap" -gt "85" ]; then
+			echo 'Zpool is too full not continuing commands and sending an email';
+			stats=`zpool  list; df -m | grep /vz;zfs list -t snapshot;lastlog -t 10`;
+			send_mail "pool is too full at $cap\n $stats"
+			/admin/configs/zfssnapclean 3
+			/admin/configs/zfssnapclean 2
+			continue;
+		elif [ "$cap" -gt "80" ]; then
+			echo 'Zpool is over 80 sending warning';
+			stats=`zpool  list; df -m | grep /vz;zfs list -t snapshot;lastlog -t 10`;
+			send_mail "pool at near 80 $cap\n $stats"
+			/admin/configs/zfssnapclean 3
+		fi
+	fi
+
+	# if this file exists we exit out
+	# acgw storage servers do not snapshot
+	# from here we begin snapshots
+	# only doing snapshots of running vms
+	checkforqs=`/admin/includes/check_for_qs`;
+	if [ -f /vz/${checkforqs}/_nosnapshotsatall ]; then
+		echo "skipping snapshots due to /vz/${checkforqs}/_nosnapshotsatall";
+	elif [ -e /admin/.info/_nosnapshotsatall ]; then
+		echo 'Skipping snapshots due to /admin/.info/_nosnapshotsatall';
+	elif [ -x /usr/sbin/zfs-auto-snapshot ]; then
+		echo 'Using zfs-auto-snapshot';
+	else
+
+		if [ -d /usr/local/cpanel -o -d /usr/local/directadmin -o -f /admin/.info/manualsnapshots ]; then
+			curload=`awk '{print $1}' /proc/loadavg  | cut -d. -f1`;
+			# skip if there are renams running
+			currentcheck=`ps auxw | grep "[z]fs rename" | grep ^root`;
+			if [ -f /admin/.info/manualsnapshots ]; then
+				echo 'Running snapshots due to /admin/.info/manualsnapshots (faking cpanel / directadmin)';
+			elif [ "$curload" -gt "$maxload" ]; then
+				echo "current load $curload is greater than maxload $maxload skipping snapshot run";
+			elif [ ! "$currentcheck" = "" ]; then
+				echo 'Skipping run because zfs renames are in the ps process list';
+			else
+				echo 'cPanel/DA zfs';
+				if [ -d /usr/local/directadmin ]; then
+					if [ ! -e /etc/cron.daily/fixquota ]; then
+						echo 'Linked fixquota';
+						ln -s /admin/storage/fixquota /etc/cron.daily/fixquota
+					fi
+				fi
+
+				echo 'Sleeping 5 seconds';
+				sleep 5s;			
+	
+				for dataset in $(zfs list -H -o name | grep -v @); do
+					echo "Found dataset ${dataset}";
+					# three snapshotes start at third
+					third=$(zfs list -t snapshot -H -o name | grep ${dataset}@third);
+					didwecomplete
+					if [ "$third" = "" ]; then
+						echo 'Third dataset does not exist';
+					else
+						if [ "$DEBUG" = "0" ]; then
+							zfs destroy ${dataset}@third
+						else
+							echo "destroy ${dataset}@third"
+						fi
+					fi	
+
+					sleep 1;
+
+			                second=$(zfs list -t snapshot -H -o name | grep ${dataset}@second);
+				        didwecomplete
+					if [ "$second" = "" ]; then
+						echo 'second dataset does not exist';
+					else
+						# move to function when testing done
+						if [ "$DEBUG" = "0" ]; then
+							zfs rename ${dataset}@second ${dataset}@third
+						else
+							echo "rename ${dataset}@second ${dataset}@third"
+						fi
+                               
+						didwecomplete;
+						RENAME=$(($RENAME +1));
+					fi
+				
+					sleep 1;
+
+					# first
+					first=$(zfs list -t snapshot -H -o name | grep ${dataset}@first$);
+					didwecomplete
+					if [ "$first" = "" ]; then
+						echo 'Creating initial dataset';
+						if [ "$DEBUG" = "0" ]; then
+							zfs snapshot ${dataset}@first
+						else
+                               		                echo "snapshot ${dataset}@first";
+						fi
+
+						didwecomplete;
+						CREATE=$(($CREATE+1));
+
+					else
+						# move to function when testing done
+						if [ "$DEBUG" = "0" ]; then
+							zfs rename ${dataset}@first ${dataset}@second
+						else
+							echo "rename ${dataset}@first ${dataset}@second";
+						fi
+						didwecomplete;
+						RENAME=$(($RENAME +1));
+	                     	 
+						# don't forget to recreate the first
+						if [ "$DEBUG" = "0" ]; then
+							zfs snapshot ${dataset}@first
+						else
+							echo "snapshot ${dataset}@first";
+						fi
+                        	 
+						didwecomplete;
+						CREATE=$(($CREATE+1));
+					fi
+					
+					sleep 1;
+
+					echo "STATS: Created $CREATE   Renamed $RENAME    Destroy $DESTROY for $dataset";
+					# da only break out of high load in loop
+					curload=`awk '{print $1}' /proc/loadavg  | cut -d. -f1`;
+                                        if [ "$curload" -gt "$maxload" ]; then
+                                                echo 'Load too high breaking';
+                                                send_mail "broke out of zfs snapshot loop for  ${dataset} at line $LINENO on $HOSTNAME load $curload"
+                                                break;
+                                        else
+                                                echo 'Load ok still continuing';
+                                        fi
+
+				done
+			fi
+		elif [ -e /usr/bin/virsh ]; then
+			# this is for kvm
+			for vz_name in $(virsh list --state-running --name); do
+				echo "Found vps ${vz_name}":
+				# remove cdrom mounts since they will not be a dataset
+				# supports standard vz and secondary
+				datasets=$(virsh domblklist ${vz_name} --details | grep -v cdrom | awk '{print $4}' | egrep "^/vz/|^/secondary/" | cut -d/ -f2-3 | egrep -v "vz/backup$|secondary/backup$");
+				didwecomplete
+
+				# for older zvols
+				# they return slightly differently
+				datasets1=$(virsh domblklist ${vz_name} --details | grep -v cdrom | awk '{print $4}' | grep ^/dev/vz | cut -d/ -f3- | grep -v vz/backup$);
+				didwecomplete
+				for dataset in $datasets $datasets1; do
+					if [ ! "$(zfs list ${dataset} -o name -H)" = "${dataset}" ]; then
+						echo 'Can not verify dataset';
+						send_mail "can not verify dataset ${dataset} at line $LINENO"
+						continue;
+					else
+						echo "Found $dataset";
+					fi
+
+
+					# third only destroy data set
+					third=$(zfs list -t snapshot -H -o name | grep ${dataset}@third);
+					didwecomplete
+					if [ "$third" = "" ]; then
+						echo 'Third dataset does not exist';
+					else
+						# move to function when testing done
+						if [ "$DEBUG" = "0" ]; then
+							zfs destroy ${dataset}@third
+						else
+							echo "destroy ${dataset}@third"
+						fi
+						DESTROY=$(($DESTROY + 1));
+					fi
+
+					#second
+					second=$(zfs list -t snapshot -H -o name | grep ${dataset}@second);
+					didwecomplete
+
+					if [ "$second" = "" ]; then
+						echo 'second dataset does not exist';
+
+					else
+						if [ -f /vz/${checkforqs}/_skipthird ]; then
+                                                	echo "Dropping third snapshot due to /vz/${checkforqs}/_skipthird";
+                                                	if [ "$DEBUG" = "0" ]; then
+                                                        	zfs destroy ${dataset}@second
+								DESTROY=$(($DESTROY + 1));
+                                                	else
+                                                        	echo "destroy ${dataset}@second"
+								DESTROY=$(($DESTROY + 1));
+                                                	fi
+						else
+							# move to function when testing done
+							if [ "$DEBUG" = "0" ]; then
+								zfs rename ${dataset}@second ${dataset}@third
+							else
+								echo "rename ${dataset}@second ${dataset}@third"
+							fi
+						fi
+						didwecomplete;
+						RENAME=$(($RENAME +1));
+					fi
+
+					# first
+					first=$(zfs list -t snapshot -H -o name | grep ${dataset}@first$);
+					didwecomplete
+
+					if [ "$first" = "" ]; then
+						echo 'Creating initial dataset';
+						if [ "$DEBUG" = "0" ]; then
+							zfs snapshot ${dataset}@first
+						else
+							echo "snapshot ${dataset}@first";
+						fi
+						didwecomplete;
+						CREATE=$(($CREATE+1));
+					else
+					# move to function when testing done
+						if [ "$DEBUG" = "0" ]; then
+							zfs rename ${dataset}@first ${dataset}@second
+						else
+							echo "rename ${dataset}@first ${dataset}@second";
+						fi
+						didwecomplete;
+						RENAME=$(($RENAME +1));	
+
+						# don't forget to recreate the first
+						if [ "$DEBUG" = "0" ]; then
+							zfs snapshot ${dataset}@first
+						else
+							echo "snapshot ${dataset}@first";
+						fi
+						didwecomplete;
+						CREATE=$(($CREATE+1));
+					fi
+
+					echo "STATS: Created $CREATE   Renamed $RENAME    Destroy $DESTROY for $dataset";
+				done
+			done
+		else
+			echo 'Not cpanel or kvm no spamshots will run';
+			continue;
+		fi
+	fi
+	if [ "$DEBUG" = "1" ]; then
+		echo "Done with pool $poolname";
+		sleep 1;
+		echo
+	fi
+done
+# end snapshots here or check for /usr/sbin/zfs-auto-snapshot
+
+if [ ! "$DEBUG" = "1" ]; then
+	sleep 2;
+fi
+
+# using this to run upscripts for hostnodes that don't have any other crons that may take care of this
+# like the tickets server
+if [ -x /admin/upscripts ]; then
+	/admin/upscripts > /dev/null 2>&1
+fi
+
+# backups drop arc with out hugepages off, don't know why
+# acronis and basic backups
+if [ -e /sys/kernel/mm/transparent_hugepage/enabled ]; then
+	echo never > /sys/kernel/mm/transparent_hugepage/enabled
+fi
+
+if [ -e /sys/kernel/mm/transparent_hugepage/defrag ]; then
+	echo never > /sys/kernel/mm/transparent_hugepage/defrag
+fi
+
+# there is some savings even on webhosting servers with ksm
+if [ ! -d /usr/local/cpanel -a ! -d /usr/local/directadmin ]; then
+	echo 'Enabling KSM';
+	if [ -e /sys/kernel/mm/ksm/run ]; then
+		echo 1 > /sys/kernel/mm/ksm/run
+	fi
+	if [ -e /sys/kernel/mm/ksm/pages_to_scan ]; then
+		echo 100 > /sys/kernel/mm/ksm/pages_to_scan
+	fi
+else
+	if [ -e /sys/kernel/mm/ksm/run ]; then
+		echo 0 > /sys/kernel/mm/ksm/run
+	fi
+fi
+
+if [ ! "$DEBUG" = "1" ]; then
+	sleep 1;
+fi
+# this is just for output and my benefit in testing
+if [ -e /etc/debian_version ]; then
+	if [ -x /usr/bin/virsh ]; then
+		if [ -d /vz ]; then
+			echo 'setting record size to 64K';
+			zfs set recordsize=64K vz; zfs set primarycache=all vz
+		fi
+	fi
+fi
+
+zpool list; zpool status; zfs list -t snapshot -o name,creation,space

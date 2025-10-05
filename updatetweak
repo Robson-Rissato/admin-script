@@ -1,0 +1,5 @@
+#!/bin/bash
+
+if [ -x /usr/local/cpanel/whostmgr/bin/whostmgr2 ]; then
+	/usr/local/cpanel/whostmgr/bin/whostmgr2 --updatetweaksettings
+fi

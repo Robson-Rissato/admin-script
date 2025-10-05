@@ -1,0 +1,25 @@
+#!/bin/bash
+
+if [ -d /usr/local/directadmin/custombuild ]; then
+	if [ "$1" = "all" ]; then
+		if [ -e /usr/bin/yum ]; then
+			yum -y update
+		elif [ -e /usr/bin/apt ]; then
+			apt update; apt -y upgrade
+		fi
+		/admin/updateda; /admin/updateda run; /admin/updateda cron
+	elif [ "$1" = "run" ]; then
+		cd /usr/local/directadmin/custombuild; for i in update_script update update_data update_webapps update_versions update_da; do ./build $i; done; /usr/local/directadmin/custombuild/build update_versions
+	elif [ "$1" = "auto" ]; then
+		cd /usr/local/directadmin/custombuild; ./build set cron yes; ./build set updates yes; ./build set webapps_updates yes; ./build cron
+	elif [ "$1" = "config" ]; then
+		cd /usr/local/directadmin/custombuild; ./build rewrite_confs
+	else
+		cd /usr/local/directadmin/custombuild; for i in update_script update update_data update_webapps update_versions update_da; do ./build $i; done; /usr/local/directadmin/custombuild/build versions
+	fi
+
+	echo
+	echo 'Usage ./updateda run|auto (enable cron)| config  empty means check versions';
+else
+	echo 'Did not find /usr/local/directadmin/custombuild';
+fi

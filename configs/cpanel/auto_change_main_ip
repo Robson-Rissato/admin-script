@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+
+# automatically change the main shared ip on cpanel
+# John Quaglieri <john@interserver.net>
+
+# can be called with fr to set up script assuming isshared has been added to reserved ips
+
+#format
+#69.10.36.228=isshared
+#69.10.36.234=isshared
+#69.10.51.218=isshared
+
+
+# load common functions like regex to verify ipv4
+if [ -f /admin/includes/common_bash_functions ]; then
+	source /admin/includes/common_bash_functions
+else
+	echo 'Missing /admin/includes/common_bash_functions';
+	exit 1;
+fi
+
+# this is where reserved ips and reasons are stored
+if [ ! -f /etc/reservedipreasons ]; then
+	echo 'Missing /etc/reservedipreasons';
+	exit 1;
+fi
+
+# this is the main shared ip location
+if [ ! -f /etc/wwwacct.conf ]; then
+	echo 'Missing /etc/wwwacct.conf';
+	exit 1;
+fi
+
+# get current main ip to exclude
+mainip=`grep "^ADDR " /etc/wwwacct.conf | cut -d" " -f2`;
+check_ip ${mainip}
+if [ "$?" -eq 1 ]; then
+	echo "Found main ip ${mainip}";
+else
+	echo 'Invalid main ip ';
+	exit 1;
+fi
+
+# for older servers ability to set other main ips
+if [ -f /admin/.info/cpanel_main_ips ]; then
+	files='/admin/.info/cpanel_main_ips /etc/reservedipreasons';
+else
+	files='/etc/reservedipreasons';
+fi
+
+# choose new shared ip and exclude current
+# -h supress filename on multiple ips
+newip=`grep -h =isshared$ ${files} | cut -d= -f1 | grep -v ${mainip} | sort -R | head -n 1`;
+check_ip ${newip}
+if [ "$?" -eq 1 ]; then
+        echo "Selected $newip";
+	cp -f /etc/wwwacct.conf /etc/wwwacct.conf~
+	/admin/replace-linux "ADDR ${mainip}" "ADDR ${newip}" -- /etc/wwwacct.conf
+	if [ "$1" = "fr" ]; then
+		if [ ! -f /admin/.info/cpanel_main_ips ]; then
+			echo "adding in first run ip";
+			echo "${mainip}=isshared" > /admin/.info/cpanel_main_ips
+		fi
+		if [ ! -L /etc/cron.hourly/auto_change_main_ip ]; then
+			echo 'Adding in cron symlink';
+			ln -s /admin/configs/cpanel/auto_change_main_ip /etc/cron.hourly/auto_change_main_ip
+		fi
+	fi
+else
+        echo 'Invalid new ip ';
+        exit 1;
+fi
+

@@ -1,0 +1,20 @@
+#!/bin/sh
+
+PATH=/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin
+
+debug=0;
+
+for i in `echo "SHOW PROCESSLIST" | mysql | grep Sleep | awk '{ print $1 ":" $6 }' | grep -v -e ":0$" -e ":1$" -e ":2$" -e ":3$" -e ":4$" -e ":5$" -e ":6$" -e ":7$" -e ":8$" -e ":9$" -e ":10$" -e ":11$" -e ":12$"`; do
+
+	mysqlid="$(echo $i | cut -d: -f1)";
+	if [ "$debug" = 1 ]; then
+		time="$(echo $i | cut -d: -f2)";
+	fi
+
+	if [ "$debug" = 1 ]; then
+		echo "kill $mysqlid (sleeping $time)";
+	else
+		echo "killing $mysqlid";
+		mysqladmin kill $mysqlid
+	fi
+done

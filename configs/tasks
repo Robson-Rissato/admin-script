@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+
+#hourly tasks on kvm nodes
+
+# test with run-parts --debug --verbose /etc/cron.hourly
+
+
+if [ ! -e /etc/dhcp/dhcpd.vps ]; then
+        echo 'Missing /etc/dhcp/dhcpd.vps not a hostnode?';
+        exit;
+fi
+
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+export HOME=/root
+
+if [ -f /etc/unblocksmtp.conf ]; then
+        for vps in `cat /etc/unblocksmtp.conf | grep ^vps`; do
+                if [ -x /admin/kvmenable ]; then
+                        /admin/kvmenable unblocksmtp $vps
+                else
+                        echo "/admin/kvmenable does not exist or is not executable";
+                fi
+        done
+fi
+
+if [ -f /etc/blocksmtp.conf ]; then
+        for vps in `cat /etc/blocksmtp.conf | grep ^vps`; do
+                if [ -x /admin/kvmenable ]; then
+                        /admin/kvmenable blocksmtp $vps
+                else
+                        echo "/admin/kvmenable does not exist or is not executable";
+                fi
+        done
+fi
+
+

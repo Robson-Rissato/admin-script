@@ -1,0 +1,5 @@
+What it does
+
+You have a router, you want to know what it does all day long? Then MRTG
+is for you. It will monitor SNMP network devices and draw pretty
+pictures showing how much traffic has passed through each interface.

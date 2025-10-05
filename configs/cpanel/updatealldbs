@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+
+if [ ! -d /usr/local/cpanel ]; then
+	echo 'Missing /usr/local/cpanel';
+	exit;
+fi
+
+for dbupdate in update_db_cache updateuserdatacache updateuserdomains update_mailman_cache; do
+	if [ -x /usr/local/cpanel/scripts/$dbupdate ]; then
+		echo "running $dbupdate";
+		/usr/local/cpanel/scripts/$dbupdate
+	fi
+done
+
+for other in /usr/local/cpanel/bin/dbindex /usr/local/cpanel/bin/mysqluserstore; do
+	if [ -x $other ]; then
+		echo "running $other";
+		$other
+	fi
+done
+
+if [ -x /usr/local/cpanel/scripts/generate_account_suspension_include ]; then
+	/usr/local/cpanel/scripts/generate_account_suspension_include --verbose --update
+fi

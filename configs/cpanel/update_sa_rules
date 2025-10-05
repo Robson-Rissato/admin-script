@@ -1,0 +1,9 @@
+#!/bin/bash
+
+if [ -f /usr/local/cpanel/3rdparty/bin/sa-update ]; then
+	/usr/local/cpanel/3rdparty/bin/sa-update -D; PERL_MM_OPT='' /usr/local/cpanel/3rdparty/bin/sa-compile 
+	if [ -x /usr/sbin/cagefsctl ]; then
+		cagefsctl --force-update;
+	fi 
+	/scripts/restartsrv_spamd; /scripts/restartsrv_exim
+fi

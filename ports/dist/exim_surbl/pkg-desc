@@ -1,0 +1,3 @@
+SURBLs differ from most other RBLs in that they're used to detect spam based on message body URIs (usually web sites). Unlike most other RBLs, SURBLs
+are not meant to identify spam senders by their message headers or connection IP addresses. Instead they allow you to identify messages by the spam
+sites mentioned in their message bodies.

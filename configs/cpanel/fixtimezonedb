@@ -1,0 +1,45 @@
+#!/bin/bash
+
+if [ ! -x /usr/bin/wc ]; then
+	echo 'No /usr/bin/wc';
+	exit;
+fi
+
+if [ ! -d /usr/local/lsws ]; then
+	echo 'No /usr/local/lsws';
+	exit;
+fi
+
+if [ ! -x /usr/sbin/cagefsctl ]; then
+	echo 'No /usr/sbin/cagefsctl';
+	exit;
+fi
+runcage=0;
+
+if [ -d /opt/cpanel ]; then
+	cd /opt/cpanel
+	for file in $(find /opt/cpanel -name 02-pecl.ini); do
+		if [ -f ${file} ]; then
+			tzcheck=$(grep ^extension=timezonedb.so$ ${file} | wc -l);
+			if [ "$tzcheck" = "0" -o "$tzcheck" = "1" ]; then
+				echo -n 'skipping ';
+				echo "$file";
+			elif [[ $tzcheck =~ ^[0-9]+$ ]]; then
+				echo -n 'Fixing file ';
+				echo "$file";
+				cat ${file} | sort | uniq > ${file}.tmp
+				mv -f ${file}.tmp ${file}
+				runcage=1;
+			else
+				echo -n 'Returned an error ';
+				echo "$tzcheck";
+			fi
+		fi
+	done
+fi
+
+if [ "$runcage" = "1" ]; then
+	cagefsctl --force-update
+	/usr/local/lsws/bin/lswsctl restart
+fi
+

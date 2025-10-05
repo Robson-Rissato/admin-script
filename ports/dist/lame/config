@@ -1,0 +1,9 @@
+NAME='lame';
+VERSION='3.97';
+MD5='90a4acbb730d150dfe80de145126eef7';
+EXT='tar.gz';
+DEPS='gcc gcc-c++';
+CONFIG='./configure';
+MAKE='make';
+MAKEINSTALL='make install';
+LDCONFIG=1

@@ -1,0 +1,95 @@
+#!/bin/sh
+
+#webuzo
+
+if [ -e /usr/local/apps/mysql56/bin/mysql ]; then
+	export PATH=$PATH:/usr/local/apps/mysql56/bin
+elif [ -e /usr/local/apps/mysql/bin/mysql ]; then
+	export PATH=$PATH:/usr/local/apps/mysql/bin
+fi
+
+# easy backup 
+# /admin/mysqldump -c -cron optional -swift
+
+if [ ! -e /var/lib/mysql ]; then
+	echo '/var/lib/mysql does not exist';
+	exit;
+fi
+ARGS="";
+
+if [ -e /usr/local/directadmin/conf/mysql.conf ]; then
+	myuser=da_admin
+        pass=`cat /usr/local/directadmin/conf/mysql.conf | grep ^passwd | cut -d= -f2`;
+	ARGS="--password=$pass";
+elif [ -e /etc/psa/.psa.shadow ]; then
+	myuser=admin
+else
+	myuser=root;
+fi
+
+echo "Using username $myuser";
+
+today=`/bin/date +%m-%d-%Y`;
+
+if [ "$2" = "-cron" ]; then
+        mkdir -p /backup/mysql/Daily
+        cd /backup/mysql
+        if [ -e  /usr/sbin/tmpwatch ]; then
+                if [ -d Daily ]; then
+                        /usr/sbin/tmpwatch -a 128 Daily
+                fi
+	elif [ -e /usr/sbin/tmpreaper ]; then
+		if [ -d Daily ]; then
+			# full path needed
+                        /usr/sbin/tmpreaper -a 128 /backup/mysql/Daily
+                fi
+        fi
+        cd Daily
+fi
+
+
+if [ ! "$1" = "-f" -a ! "$2" = "-cron" ]; then
+
+	echo 'Checking approx mysql space usage';
+	echo
+	du -sm /var/lib/mysql
+	echo
+	echo -n "Run mysqldump? [y/N]? ";
+	read wait
+fi
+
+# compress
+if [ "$1" = "-c" ]; then
+	if [ -f /usr/bin/zstd ]; then
+		echo 'Using zstd';
+		mysqldump -f --all-databases --add-drop-table --allow-keywords -u $myuser $ARGS | zstd -c > all_db-$today.sql.zstd
+	else
+		mysqldump -f --all-databases --add-drop-table --allow-keywords -u $myuser $ARGS | gzip -c > all_db-$today.sql.gz
+	fi
+elif [ "$wait" = "y" -o "$1" = "-f" ]; then
+	mysqldump -f --all-databases --add-drop-table --allow-keywords -u $myuser $ARGS > all_db-$today.sql
+fi
+
+if [ "$3" = "-swift" ]; then
+	echo "Backup up via swift";
+
+	#container name
+	container=`hostname`;
+	/admin/swift/mkdir_p $container --force
+
+	# date to know when we rain
+	fulldate=`date`;
+        echo $fulldate > date.txt
+	/admin/swift/rsync $container date.txt --put date.txt
+	
+	# put sql backup dump
+	/admin/swift/isput $container all_db-$today.sql.gz
+	
+	# keep 45 days
+	/admin/swift/deleteafter $container all_db-$today.sql.gz 45
+	
+	# do mysqldir
+	/admin/swift/fly $container /var/lib/mysql frombackup varlibmysql_$container_$today
+	/admin/swift/deleteafter $container varlibmysql_$container_$today 45
+	
+fi

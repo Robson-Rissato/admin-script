@@ -1,0 +1,88 @@
+#!/usr/bin/env bash
+
+# ixhash on both cpanel and directadmin
+
+if [ -d /usr/local/cpanel -o -d /usr/local/directadmin ]; then
+
+	if [ ! -d /etc/mail/spamassassin ]; then
+		echo 'Missing /etc/mail/spamassassin';
+		exit;
+	fi
+
+	# uribl data
+	if [ ! -f /etc/mail/spamassassin/customrbl.cf ]; then
+		echo 'adding /etc/mail/spamassassin/customrbl.cf';
+		/bin/cp -v -f /admin/configs/cpanel/customrbl.cf /etc/mail/spamassassin/customrbl.cf
+	fi
+
+	#ixhash data
+	if [ ! -f /etc/mail/spamassassin/iXhash.cf ]; then
+		/bin/cp -v -f /admin/configs/cpanel/ixhash/iXhash.cf /etc/mail/spamassassin/iXhash.cf
+		/bin/cp -v -f /admin/configs/cpanel/ixhash/iXhash.pm /etc/mail/spamassassin/iXhash.pm
+		if [ -d /usr/local/cpanel ]; then
+			/usr/local/cpanel/3rdparty/bin/spamassassin --lint && /admin/configs/cpanel/update_sa_rules
+		fi
+
+		if [ -d /usr/local/directadmin ]; then
+			spamassassin --lint && sa-update -D && sa-compile
+			systemctl restart spamd
+		fi
+	else
+		echo -n 'iX installed checking for update.';
+		/bin/cp -u /admin/configs/cpanel/customrbl.cf /etc/mail/spamassassin/customrbl.cf
+		if [ -d /usr/local/cpanel ]; then
+			/bin/cp -u /admin/configs/cpanel/ixhash/iXhash.cf /etc/mail/spamassassin/iXhash.cf
+			/bin/cp -u /admin/configs/cpanel/ixhash/iXhash.pm /etc/mail/spamassassin/iXhash.pm && echo -n ..updated && /admin/configs/cpanel/update_sa_rules
+		fi
+
+		if [ -d /usr/local/directadmin ]; then
+			/bin/cp -u /admin/configs/cpanel/ixhash/iXhash.cf /etc/mail/spamassassin/iXhash.cf
+			/bin/cp -u /admin/configs/cpanel/ixhash/iXhash.pm /etc/mail/spamassassin/iXhash.pm && echo -n ..updated && sa-update -D && sa-compile && systemctl restart spamd
+		fi
+		echo
+	fi
+
+	# inval sendgrid
+	# this is no longer in use
+	if [ -e /etc/mail/spamassassin/SendGrid.cf ]; then
+		echo 'Removing legacy sendgrid config';
+		/bin/rm -v /etc/mail/spamassassin/SendGrid.cf
+
+		if [ -f /etc/mail/spamassassin/SendGrid.pre ]; then
+			/bin/rm -v /etc/mail/spamassassin/SendGrid.pre
+		fi
+
+		if [ -f /etc/mail/spamassassin/SendGrid.pm ]; then
+			/bin/rm -v /etc/mail/spamassassin/SendGrid.pm
+		fi
+	fi
+
+	# cpanel specific
+	if [ -d /usr/local/cpanel ]; then
+		# fix for outgoing spam scan having the standard and over 10 set
+		if [ -f /etc/exim.conf.localopts ]; then
+			scheck=`grep ^acl_outgoing_spam_scan=1$ /etc/exim.conf.localopts`;
+			scheck2=`grep ^acl_outgoing_spam_scan_over_int=100$ /etc/exim.conf.localopts`;
+			if [ "$scheck" = "" ]; then
+				if [ "$scheck2" = "acl_outgoing_spam_scan_over_int=100" ]; then
+					echo 'Outgoing spam scan is good';
+				fi
+			elif [ "$scheck" = "acl_outgoing_spam_scan=1" ]; then
+				if [ "$scheck2" = "acl_outgoing_spam_scan_over_int=100" ]; then
+					echo 'Removing double acl outgoing scan';
+					sed -i.bak '/acl_outgoing_spam_scan=1/d' /etc/exim.conf.localopts
+				fi
+			fi
+		fi
+	fi
+
+	# directadmin specific
+	if [ -d /usr/local/directadmin ]; then
+		if [ -f /etc/exim.strings.conf.custom ]; then
+			cp -f -u /admin/storage/config/exim.strings.conf.custom /etc/exim.strings.conf.custom && da build exim_conf
+		fi
+	fi
+else
+	echo 'Requires cPanel or directadmin';
+
+fi

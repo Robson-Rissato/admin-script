@@ -1,0 +1,951 @@
+#!/usr/bin/env bash
+
+# 08/05/2025
+# calling /admin/mb/restart_rspamd c - is the ssp service status probe for mailbaby
+# this checks config and basic errors
+
+# to do - check int.conf and unbound.conf checksums
+# dnsdist.conf - doing the addaction?
+
+# to do webhosting outbound checks need to be added no proxy
+
+# zone mta version
+version=3.10.2;
+latestrspamd=3.12.1;
+latestphp=8.1;
+
+#default we are not a relay server
+relay=0;
+
+MYSQL_SERVER="mysql.mailbaby.net"
+MYSQL_PORT=3306
+TIMEOUT=2
+
+MONGO_SERVER="mongologs.mailbaby.net"
+MONGO_PORT=27017
+
+
+hostname=`hostname -s`;
+
+# notes /usr/local/lib/rustlib rust package is needed if we decide to compile clamav
+# https://bugs.freebsd.org/bugzilla/show_bug.cgi?id=268335 cmake also needs to be compiled
+# but it seems deleting the db in /var/run/clamav and running freshclam can resolve an out of memory error
+
+#detecting cron run on freebsd
+if [[ -t 0 ]]; then
+	cronrun=0;
+else
+	cronrun=1;
+fi
+
+function restart_rspamd()
+{
+	rversion=`timeout 5 rspamd -v | awk '{print $4}'`;
+        if [ "$rversion" = "" ]; then
+                echo 'did not get a valid version from rspamd -v';
+        	exit;
+        fi
+        echo -n 'Restarting rspamd version ';
+        echo $rversion
+
+	if [ -e /var/service/rspamd ]; then
+                        # we want to only send the kill signal to the rspamd main process
+                        # https://rspamd.com/doc/architecture/index.html
+                        #rspamadm configtest && killall -SIGHUP rspamd-2.6
+                        if [ "$1" = "f" ]; then
+                                rspamadm configtest && svc -d /var/service/rspamd && svc -u /var/service/rspamd
+                        else
+                                rspamadm configtest && svc -h /var/service/rspamd
+                        fi
+                else
+                        if [ -d /var/service/zone-mta ]; then
+                                svc -d /var/service/zone-mta/
+                                timeout 10 /usr/local/etc/rc.d/rspamd stop
+                                killall rspamd-$rversion; killall -9 rspamd-$rversion
+				sleep 2
+                                /usr/local/etc/rc.d/rspamd start
+                                svc -u /var/service/zone-mta
+				sleep 1
+                                if [ -f /var/log/zonemta.log ]; then
+                                        tail -n 10 /var/log/zonemta.log
+                                else
+                                        echo 'Missing /var/log/zonemta.log';
+                                fi
+                        else
+                                echo 'Missing /var/service/zone-mta';
+                        fi
+                fi
+                echo 'Completed rspamd restart';
+}
+
+if [ -x /usr/local/bin/rspamadm ]; then
+	echo 'Use ./restart_rspamd check|c - to just check the config';
+	# with out calling with c or check we restart and exit
+	if [ ! "$1" = "check" -a ! "$1" = "c" ]; then
+		restart_rspamd
+		exit;
+	else
+		echo 'Use /admin/tests/ssp directly instead of calling /admin/mb/restart_rspamd c';
+	fi
+
+	echo
+
+	# these are the main two tasks to do on a cron run
+	# check for restart file
+	# issues with ssh hanging between 12.3 freebsd and 13 from cert-test
+	if [ "$cronrun" = "1" ]; then
+		echo 'cronrun check for restarting rspamd block';
+		if [ -f /tmp/restart.rspamd ]; then
+			rm -v /tmp/restart.rspamd
+			# random sleep between 120 seconds
+			sleep `jot -r 1 0 120` 
+			restart_rspamd
+		fi
+	else
+		echo 'Manual non cron run';
+	fi
+
+	/usr/local/etc/rc.d/rspamd status
+        if [ "$?" = "1" ]; then
+                echo '  ** Rspamd is not running, restarting';
+                /usr/local/etc/rc.d/rspamd restart
+        fi
+
+	if [ "$cronrun" = "1" ]; then
+		echo 'Exit on cron run';
+        	exit;
+        fi
+	# exit if cron run above
+        echo
+
+
+	# parse the version from package.json
+	if [ -f /home/zone/zone-mta-template/package.json ]; then
+		myversion=`grep \"zone-mta\" /home/zone/zone-mta-template/package.json  | cut -d: -f2 | cut -d\" -f2 | tr -d "^"`;
+		if [ "$version" = "$myversion" ]; then
+			echo "zone mta version $myversion";
+			echo
+		else
+			echo " ** Out of date zonemta got version $myversion and want version $version and use /opt/package.json from staging";
+			sleep 1;
+		fi
+	else
+		echo 'Missing /home/zone/zone-mta-template/package.json';
+		sleep 1;
+	fi
+
+	echo
+	# relay0, relay1, relay2, relay3 and la-relay0 will have default.js unmodified
+	# the rest will have it modified to remove the default zone
+	echo 'default.js changes in zonemta 3.9.4';
+	sleep 1;
+	if [[ $hostname =~ relay ]]; then
+		relay=1;
+		md5 -c 42696461fd9e11212fd22ceb0fc882f4 /home/zone/zone-mta-template/config/zones/interserver.toml || echo /home/zone/zone-mta-template/config/zones/tonline.toml fails checksum
+		md5 -c 5a5f5b18f0e616f4dc2b6d4bb907ae00 /home/zone/zone-mta-template/config/zones/tonline.toml || echo /home/zone/zone-mta-template/config/zones/tonline.toml fails checksum
+		md5 -c c205b91e606013a6183bd7fb0af48d08 /home/zone/zone-mta-template/node_modules/zone-mta/config/default.js || echo zonemta relay default.js failed checksum
+	        md5 -c 1e1a0b54f83dc0df5ab8ee90261f5b4d /home/zone/zone-mta-template/config/zones/mailchannels.toml || echo zonemta mailchannels.toml fails checksum
+		md5 -c 67327b1341bfc94debb0cf4dab6f86e5 /home/zone/zone-mta-template/config/zones/default.toml || echo zonemta zones/default.toml  fails checksum
+		md5 -c e1abe33dfd74dd923f7359ca24c34dc6 /home/zone/zone-mta-template/config/zones/neutral.toml || echo zonemta zones/neutral.toml fails checksum
+		md5 -c 2c3401ba8d1410b9f9bf61c3431c2ebc /home/zone/zone-mta-template/config/zones/grey.toml || echo zonemta zones/grey.toml fails checksum
+		md5 -c 1faaa3e3dd6e63625a0486e7e0e4157b /home/zone/zone-mta-template/config/zones/good.toml || echo zonemta zones/grey.toml fails checksum
+ 	else
+		echo 'default.js updates in 3.9.4 for MTA-STS';
+		md5 -c 555e1e6cb3af9082a7544f9060c1dbd3 /home/zone/zone-mta-template/node_modules/zone-mta/config/default.js || echo zonemta NON relay default.js failed checksum use default-offload-rspamd.js from staging
+		for myzone in bounces.toml bqueue.toml default.toml fallback1.toml fwd.toml good.toml grey.toml interserver.toml mailchannels.toml neutral.toml routed.toml rspamd.toml slow.toml; do
+			if [ -f /home/zone/zone-mta-template/config/zones/$myzone ]; then
+				echo "Warning /home/zone/zone-mta-template/config/zones/$myzone exists on a non relay server";
+				sleep 2;
+			fi
+		done
+	fi
+	echo
+	sleep 1;
+	echo 'Config check';
+	if [[ $hostname =~ webhosting ]]; then
+		md5 -c 79adaa94dc01f3b22e7d4fd4ec4ad37a /home/zone/zone-mta-template/config/zonemta.toml || echo /home/zone/zone-mta-template/config/zonemta.toml fails checksum
+	else
+		md5 -c a10007f26c489e7022da2850ed51076c /home/zone/zone-mta-template/config/zonemta.toml || echo /home/zone/zone-mta-template/config/zonemta.toml fails checksum
+	fi
+	md5 -c 31573d2965264ce4cb0300fdd715f9e3 /var/db/rspamd/mailbaby.key || echo /var/db/rspamd/mailbaby.key failed checksum
+	md5 -c 1482f8243ae69d84e2626fe941bcad61 /usr/local/etc/rspamd/rspamd.conf.local || echo rspamd.conf.local failed checksum
+	echo "lua scripts expect $latestrspamd";
+	md5 -c 6112f10c51a154a8ed4eb22a74891743 /usr/local/share/rspamd/plugins/mx_check.lua || echo mx_check failed checksum
+	#md5 -c 99f783e6804f9a140159aa55e3daef74 /usr/local/share/rspamd/plugins/spamtrap.lua || echo spamtrap failed checksum
+	echo
+	sleep 1;
+	md5 -c 530a3bf905fe260d1d8f39712c81bb72 /home/zone/zone-mta-template/node_modules/zone-mta/plugins/core/rspamd/index.js || echo zonemta rspamd failed checksum
+	md5 -c 566a2832194c91c7906aaaf142cf9be9 /home/zone/zone-mta-template/node_modules/zone-mta/config/bounces.txt || echo zonemta bounces failed checksum
+	md5 -c 14b3ad8f3678df1fbed168d7e6b1594f /home/zone/zone-mta-template/config/pools.js || echo zonemta pools.js fails checksums
+	md5 -c 822e172b4d45a9d9a1ddab769914a354 /home/zone/zone-mta-template/config/dbs.js || echo zonemta dbs.js fails checksums
+	echo 'Note dbs.js needs to be cleaned up to ensure all new systems are in it';
+	md5 -c 58b09b964e221170f98af51e4aa5eceb /usr/home/zone/zone-mta-template/plugins/include/process-headers.js || echo process-headers.js fails checksums
+	md5 -c e9f23d291177c6a9bbaefa2abf6f3195 /home/zone/zone-mta-template/config/plugins/interserver-xauth-ratelimit.toml || echo interserver-xauth-ratelimit.toml fails checksum
+
+	md5 -c 4f24fdc07cb2410c1408f056cd4d9c64 /home/zone/zone-mta-template/config/plugins/email-bounce.toml | echo "email-bounce.toml fails checksums make sure the bounce mail is mailer-daemon@bounces.mailbaby.net";
+
+	if [ "$hostname" = "offload" -o "$hostname" = "offload2" ]; then
+		md5 -c 0a4abb05fdaf5fad90cafda6bdd6bac9 /home/zone/zone-mta-template/config/interfaces/feeder.toml || echo zonemta feeder.toml fails checksums for offload or offload2 use feeder.toml.offload
+	elif [[ $hostname =~ webhosting ]]; then
+		md5 -c bd92b3dd86bf0a9d4625f1c10004fca2 /home/zone/zone-mta-template/config/interfaces/feeder.toml || echo zonemta feeder.toml fails checksums
+	else
+		md5 -c deb7b26c8da9ea2138eac479d754513b /home/zone/zone-mta-template/config/interfaces/feeder.toml || echo zonemta feeder.toml fails checksums
+	fi
+
+	md5 -c e5d0e0a4a87c331845d60e390f32241e /usr/local/etc/nginx/nginx.conf || echo /usr/local/etc/nginx/nginx.conf needs to limit rspamd ip connections
+	md5 -c 8cffdb90b639d1177a051cfd7de2e578 /usr/local/www/nginx/index.html || echo /usr/local/www/nginx/index.html needs to update to have mailbaby banner on relay ips
+
+	sleep 1;
+
+	md5 -c 7191e71499f5e5a5ef952344c37a4489 /var/service/zone-mta/log/run || echo /var/service/zone-mta/log/run fails checksums which could mean timestamps do not work
+
+	md5 -c 02b71cd7a13b706630bbbcae5ce1a1b1 /var/service/zone-mta/run || echo /var/service/zone-mta/run fails checksum
+
+	md5 -c f873c909f7cd28336e7dbdc32372b207 /usr/local/etc/freshclam.conf || echo /usr/local/etc/freshclam.conf fails checksum
+
+	md5 -c c27b53724014ce86ed2b3588c91f441a /var/service/rspamdcluster/rspamd-haproxy.conf || echo /var/service/rspamdcluster/rspamd-haproxy.conf fails checksum
+
+	md5 -c 26e4c8dfe30f19a73d48b171235e9d9b /home/zone/zone-mta-template/./node_modules/python-spfcheck2/index.js || echo /home/zone/zone-mta-template/./node_modules/python-spfcheck2/index.js for spf redis cache fails checksum
+	md5 -c 339d36f36f14473023cd98332599f5a5 /home/zone/zone-mta-template/./node_modules/python-spfcheck2/spfcheck2.py || echo /home/zone/zone-mta-template/./node_modules/python-spfcheck2/spfcheck2.py for spf caching in redis fails checksum
+
+	if [ ! -f /etc/pf.conf ]; then
+		echo "Missing /etc/pf.conf ?";
+		sleep 1;
+	else
+		pfcheck=`grep "pass in proto tcp from any to any port 80 flags S/SA keep state" /etc/pf.conf`;
+		if [ "$pfcheck" = "" ]; then
+			echo "PF.conf change required need";
+			echo "pass in proto tcp from any to any port 80 flags S/SA keep state";
+			echo 'added to /etc/pf.conf and run /etc/rc.d/pf reload';
+		fi
+	fi
+	
+	if [[ $hostname =~ relay ]]; then
+		echo 'Note sender.patch changes in zone 3.6.13';
+		if [ "$version" = "3.6.13" ]; then
+			md5 -c 4746fbccc432cb367abfaf91046159fe /home/zone/zone-mta-template/node_modules/zone-mta/lib/sender.js || echo "/home/zone/zone-mta-template/node_modules/zone-mta/lib/sender.js fails checksum use cd /home/zone/zone-mta-template/node_modules/zone-mta; patch -p0 < /admin/mb/sender.patch";
+		elif [ "$myversion" = "3.7.0" ]; then
+			md5 -c 143c41cfb966c0c20b6245921711ca9e /home/zone/zone-mta-template/node_modules/zone-mta/lib/sender.js || echo "/home/zone/zone-mta-template/node_modules/zone-mta/lib/sender.js fails checksum use cd /home/zone/zone-mta-template/node_modules/zone-mta; patch -p0 < /admin/mb/sender.patch";
+		elif [ "$myversion" = "3.9.4" ]; then
+			md5 -c 30d95f2dca39f3da70dc24f49d3a308a /home/zone/zone-mta-template/node_modules/zone-mta/lib/sender.js || echo "/home/zone/zone-mta-template/node_modules/zone-mta/lib/sender.js fails checksum use cd /home/zone/zone-mta-template/node_modules/zone-mta; patch -p0 < /admin/mb/sender.patch"
+		else
+			md5 -c 9287ee2376565a025a728cfdcdc24a41 /home/zone/zone-mta-template/node_modules/zone-mta/lib/sender.js || echo "/home/zone/zone-mta-template/node_modules/zone-mta/lib/sender.js fails checksum use cd /home/zone/zone-mta-template/node_modules/zone-mta; patch -p0 < /admin/mb/sender.patch" 
+		fi
+	fi
+
+	echo
+	if [ -f /usr/local/etc/rspamd/local.d/logging.inc ]; then
+		echo " * WARNING * /usr/local/etc/rspamd/local.d/logging.inc exits which is used for debugging. You probably can remove this";
+		sleep 5;
+	fi
+	echo
+
+	md5 -c 582709207d7e520e0c4da0e04543ef5f /usr/local/etc/rspamd/local.d/spamtrap.conf || echo "/usr/local/etc/rspamd/local.d/spamtrap.conf should be disbled";
+
+	sleep 1;
+
+	rcheck=`md5 -q /etc/resolv.conf`;
+
+	if [ "$rcheck" = "58176b2a148445cc83dfa84b8c8d58b7" -o "$rcheck" = "6d9bb9660730443b9a6fdae0475e1df5" -o "$rcheck" = "0547085f16ad6aaa9231c4d869e7376f" ]; then
+		echo 'Resolv.conf passes checksums';
+	else
+		echo '	** Error: resolv.conf failed checksum';
+	fi
+	echo
+
+	if [ ! -e /usr/local/sbin/dnsdist ]; then
+		echo '	** Error: Missing dnsdist /usr/local/sbin/dnsdist';
+	else
+		md5 -c b002805feb098bcc1b029a85b1d34e35 /usr/local/etc/dnsdist/dnsdist.conf || echo "/usr/local/etc/dnsdist/dnsdist.conf fails checksum"
+	fi
+	echo
+
+	echo
+	echo "checking /home/zone/zone-mta-template/plugins/"
+	mydir="/home/zone/zone-mta-template/plugins/";
+	md5 -c 9c7b04a9ed7c25798a230c9117256d43 $mydir/authplugin.js
+	md5 -c bf42d6d5887ff85ab29a4bd9d3a55618 $mydir/counters.js
+	md5 -c a85b7b3e2186585e8d3388c08af1f580 $mydir/deferedtomailchannels.js
+	md5 -c 184e25e610765dcc29b9d1e088eed9a9 $mydir/interserver-greylisttomailchannels.js
+	md5 -c 8c84bf264861ec782c8a4f88bf8e41aa $mydir/interserver-log.js
+	md5 -c 41008a73da142fd150e04cf37a4ebee1 $mydir/interserver-log2.js
+	md5 -c 6fd7e40ab9ad4bd50d42783f52b5a7bd $mydir/interserver-xauth-ratelimit.js
+	md5 -c 57cc6f53ca1d53936db3b8bf2c86cb60 $mydir/interserver-xauthuser-add.js
+	md5 -c 2323a79fd4750fc13d920bbf32e7a340 $mydir/mailbabydkimhost.js
+	md5 -c 4480513a58e60e59f5013e19bb471cbe $mydir/mxvalidate.js
+	md5 -c a1f6b183595329f233a00683f1571a35 $mydir/queueroute.js
+	md5 -c 811443e7e16d03d668dce91890011e74 $mydir/zonemta-limiter-fork.js
+	md5 -c 745e7cac76cf9ff891830343dcfb6006 $mydir/apitxtlockdown.js
+
+	# I believe this is not in use
+	md5 -c 43479a797199d9f48f83915bd2bf402a $mydir/spf-check.js
+	echo
+
+	if [ -f /home/zone/zone-mta-template/config/interfaces/feeder2.toml ]; then
+		echo '	** ERROR remove old /home/zone/zone-mta-template/config/interfaces/feeder2.toml if /home/zone/zone-mta-template/config/interfaces/feeder.toml passes checksum';
+		echo
+		sleep 1;
+	fi 
+
+	if [ ! -d /usr/local/etc/xinetd.d ]; then
+		echo '	** ERROR: xinetd is NOT installed and we want that for pyzor';
+		echo
+	else
+		if [ -f /usr/local/etc/xinetd.d/mongo ]; then
+			echo ' ** xinetd mongodb proxy is set up - change over to the new haproxy format';
+			sleep 1;
+		fi
+		# pyzor has been moved to remote servers
+	fi
+	echo
+
+	echo "Latest rspamd version is $latestrspamd";
+	timeout 5 rspamd -v
+	echo
+
+	if [ -e /var/log/zonemta.log ]; then
+		concheck=`tail -n 1000 /var/log/zonemta.log | grep "connect EADDRNOTAVAIL 127.0.0.1:11333"`;
+		if [ ! "$concheck" = "" ]; then
+			echo '	** WARN: Connection errors in zonemta';
+			restart_rspamd
+			echo -e "${concheck}";
+			restart_rspamd
+		fi
+
+		mtscheck=`tail -n 10000 /var/log/zonemta.log | grep "policy check failed" | head -n 10`;
+		if [ ! "$mtscheck" = "" ]; then
+			echo "mtaSts section on default.js may not be set or not set to disabled sync default.js";
+			echo "$mtscheck";
+			echo
+			sleep 2;
+		fi
+
+		rediserrors=`tail -n 30000 /var/log/zonemta.log | grep "GET can't be processed. The connection is already closed"`;
+		if [ ! "$rediserrors" = "" ]; then
+			echo "Seeing redis GET errors";
+			echo "$rediserrors";
+			echo
+			sleep 2;
+		fi	
+	
+		mysqlcheck=`tail -n 1000 /var/log/zonemta.log | grep "mysqlx.getClient()\" to create a new one"`;
+		if [ ! "$mysqlcheck" = "" ]; then
+			echo '	** Warning: MySQL session errors in /var/log/zonemta.log restart node';
+			sleep 2
+		fi
+		echo
+	else
+		echo '	** Warning missing /var/log/zonemta.log';
+		echo
+		sleep 2;
+	fi
+
+	echo 'SPF checks';
+	check=`pkg info | grep pyspf`;
+	if [ "$check" = "" ]; then
+		echo '	** ERROR: Missing pyspf you may need to install a new version like py311-pyspf';
+		sleep 2;
+		echo
+	fi
+
+	peclmongo=`pkg info | grep pecl-mongodb`;
+	if [ "$peclmongo" = "" ]; then
+		echo '	** ERROR: Missing pecl-mongo like php80-pecl-mongodb';
+		sleep 2;
+		echo
+	fi
+
+	if [ ! -e /usr/local/bin/spf.py ]; then
+		echo ' * Missing /usr/local/bin/spf.py somehow';
+		sleep 2;
+	fi
+
+	/usr/local/bin/python3 /home/zone/zone-mta-template/./node_modules/python-spfcheck2/spfcheck2.py 199.231.189.154 falsepositive@mailbaby.net relay0.mailbaby.net
+	echo '		Note: Got an error? Try pkg install py311-pyspf';
+	echo
+	sleep 1;
+	# end spf checks
+	echo
+
+	if [ ! -f /usr/local/etc/unbound/int.conf ]; then
+		echo '	** ERROR: Missing /usr/local/etc/unbound/int.conf';
+		echo
+		sleep 1;
+	fi
+
+	if [ ! -e /usr/local/bin/nslookup ]; then
+		echo '	** ERROR: Missing bindtools to test unbound';
+		echo
+	else
+		echo 'testing unbound';
+		nslookup google.com 0
+		echo 'A dns timeout above would need to check dnsdist (port 53) and unbound (port 54)';
+		sleep 1;
+	fi
+	echo
+
+	echo -n "Testing connection to $MYSQL_SERVER";
+	nc -w $TIMEOUT $MYSQL_SERVER $MYSQL_PORT
+	if [ $? -eq 0 ]; then
+    		echo " Connection successful to $MYSQL_SERVER"
+	else
+    		echo " Connection failed $MYSQL_SERVER"
+	fi
+	echo
+
+        echo -n "Testing connection to $MONGO_SERVER";
+        nc -w $TIMEOUT $MONGO_SERVER $MONGO_PORT
+        if [ $? -eq 0 ]; then
+                echo " Connection successful to $MONGO_SERVER";
+        else
+                echo " Connection failed to $MONGO_SERVER";
+        fi
+        echo
+
+
+	for prog in /usr/local/sbin/unbound /usr/local/sbin/clamd /usr/local/bin/node /usr/local/bin/perl /usr/local/bin/python /usr/local/sbin/dnsdist /usr/local/sbin/xinetd /usr/local/sbin/nginx /usr/local/bin/flock /usr/local/bin/jq /usr/local/bin/sudo /usr/local/bin/redis-server; do
+		if [ ! -e $prog ]; then
+			echo "	** WARNING Missing $prog";
+			sleep 1;
+		else
+			# skip the non binaries
+			if [ "$prog" = "/usr/local/bin/npm" ]; then
+				echo
+			else
+				progcheck=`ldd $prog | grep "not found"`;
+				if [ ! "$progcheck" = "" ]; then
+					echo "	** WARNING $prog has missing binary dependancy you need to reinstall from ports for example - pkg install -f $prog";
+					sleep 1;
+				fi
+			fi
+		fi
+	done
+	echo
+
+	if [ ! -e /usr/local/sbin/postfix ]; then
+		echo " ** Note missing postfix - if rspamd7 (testing postfix) is working better switch from sendmail to postfix";
+		sleep 1;
+	fi
+	echo
+
+	if [ -f /usr/local/etc/rc.d/nginx ]; then
+		/usr/local/etc/rc.d/nginx status
+	else
+		echo '	** Missing /usr/local/etc/rc.d/nginx';
+	fi
+	echo
+
+	if [ ! -f /usr/local/bin/git ]; then
+		echo '* NOTE missing /usr/local/bin/git which we will use in the future for ports see https://wiki.interserver.net/index.php/Git_ports_freebsd_new';
+		echo 'To fix: pkg install git';
+		sleep 2;
+	else
+		if [ ! -d /usr/ports/.git ]; then
+			echo '* NOTE /usr/ports is not yet using git';
+			sleep 2;
+		else
+			gitwrong=`crontab -l | grep "cd /usr/ports && git pull"`;
+			if [ ! "$gitwrong" = "" ]; then
+				echo " * NOTE replace the git pull command with";
+				echo "@daily git -C /usr/ports pull --ff-only";
+				sleep 2;
+			fi
+
+			gitcheck=`crontab -l | grep "git -C /usr/ports pull --ff-only"`;
+			if [ "$gitcheck" = "" ]; then
+				echo " * NOTE add to cron @daily git -C /usr/ports pull --ff-only";
+				echo "to cron for git and ports";
+				sleep 2;
+			fi
+		fi
+	fi
+
+	if [ "$relay" = "1" ]; then
+		if [ ! -f /root/queuecheck ]; then
+			echo '	** MISSING /root/queuecheck copy it from cert-test in /opt/queuecheck to /root/queuecheck';
+			sleep 2;
+		else
+			queuecheckcron=`crontab -l | grep /root/queuecheck$`;
+			if [ "$queuecheckcron" = "" ]; then
+				echo '	** Missing queuecheck in cron';
+				echo
+				echo '*/5 * * * * /usr/local/bin/flock -n /var/run/ql.lock /usr/local/bin/bash /root/queuecheck';
+				echo
+				echo 'Add the above to crontab -e';
+				echo
+				sleep 2;
+			fi
+		fi
+	fi
+
+	zcroncheck=`crontab -l | grep /admin/mb/zmta_res`;
+        if [ "$zcroncheck" = "" ]; then
+                echo '	** Missing zone restart cron update in cron add in';
+                echo '@daily /admin/mb/zmta_res';
+                sleep 2;
+        fi
+	echo
+
+
+	# check for hyperscan
+	if [ -x /usr/local/bin/rspamc ]; then
+		hscheck=`ldd /usr/local/bin/rspamc | grep libhs.so`;
+		if [ "$hscheck" = "" ]; then
+			echo '	** ERROR TASK: RSPAMC DOES NOT have hyperscan rebuild through ports';
+			sleep 2;
+			echo
+		fi
+	else
+		echo '	** WARNING: We are missing /usr/local/bin/rspamc';
+	fi
+
+	if [ ! -e /var/run/clamav/clamd.sock ]; then
+		echo '	** WARNING: Missing clamav sock at /var/run/clamav/clamd.sock';
+		if [ -f /var/log/clamav/clamd.log ]; then
+			tail -n 10 /var/log/clamav/clamd.log
+			echo ' If clamd shows out of memory try running:';
+			echo
+			echo 'cd /var/db/clamav/; rm -f *; freshclam';
+			echo
+			sleep 1;
+		else
+			echo ' ** Missing /var/log/clamav/clamd.log is clamd installed?';
+		fi
+	fi
+
+	if [ ! -f /var/cron/tabs/zone ]; then
+		echo '	** WARNING: missing crontab for user zone';
+		sleep 1;
+	else
+		rsynccheck=`grep rsync /var/cron/tabs/zone`;
+		if [ "$rsynccheck" = "" ]; then
+	                echo '	** WARNING: missing entry for rsync in crontab for user zone';
+			sleep 1;
+		fi
+	fi
+
+	echo
+
+	if [ ! -x /usr/local/sbin/haproxy ]; then
+		if [ ! "$hostname" = "la-relay0" ]; then
+			echo ' ** NOTE missing /usr/local/bin/haproxy';
+			sleep 1;
+		fi
+	fi
+
+	if [ ! -f /usr/home/zone/zmta-webadmin/config/default.toml ]; then
+		echo ' ** WARNING: Missing /usr/home/zone/zmta-webadmin/config/default.toml';
+		sleep 1;
+	else
+		echo -n  'zweb logs uses: ';
+		cat /usr/home/zone/zmta-webadmin/config/default.toml | grep ^mongo | cut -d "@" -f2 | cut -d: -f1
+
+		if [ -f /usr/local/etc//haproxy.conf ]; then
+			echo -n 'and zone mta uses (they should match): ';
+			cat /usr/local/etc//haproxy.conf | grep "server mongo" | awk '{print $3}' | cut -d: -f1
+		else
+			if [ "$hostname" = "la-relay0" ]; then
+				echo ' * No haproxy ok on la-relay0 as there is a local mongodb';
+			else
+				echo ' * NOTE you really should add haproxy';
+				sleep 1;
+			fi
+		fi
+	fi
+
+	# always want cron running
+	croncheck=`ps auxw | grep cron | grep -v grep`;
+	if [ "$croncheck" = "" ]; then
+		echo
+		echo '	* WARN cron not running restarting';
+		/etc/rc.d/cron restart
+		echo
+		sleep 1;
+	fi
+
+	# fixed libuv with ai once
+	if [ -f /var/service/zmta-webadmin/log/main/current ]; then
+		zwebcheck=`tail -n 10 /var/service/zmta-webadmin/log/main/current | grep -i Assertion`;
+		if [ ! "$zwebcheck" = "" ]; then
+			echo
+			echo '	* WARN failures in /var/service/zmta-webadmin/log/main/current ';
+			echo 'This was once resolved reinstalling port libuv building manually on freebsd 13.2';
+			echo
+			sleep 1;
+		fi
+	else
+		echo
+		echo '	* WARN missing /var/service/zmta-webadmin/log/main/current you need zmta-webadmin for logs';
+		echo
+		sleep 1;
+	fi
+	
+	# permission checks
+	if [ -d /home/zone/zone-mta-template/relay.is.cc ]; then
+		permcheck=`stat /home/zone/zone-mta-template/relay.is.cc | awk '{print $5}'`;
+		if [ ! "$permcheck" = "zone" ]; then
+			echo '	* ERROR /home/zone/zone-mta-template/relay.is.cc permissions are incorrect. To fix';
+			echo 'chown -R zone:zone /home/zone/zone-mta-template/relay.is.cc';
+			echo
+			sleep 1;	
+		fi
+	else
+		echo '	* WARN missing /home/zone/zone-mta-template/relay.is.cc';
+		echo
+		sleep 1;
+	fi
+
+	# vps may have port 25 blocked
+	echo ' * testing port 25'
+	if [ -f /home/zone/zone-mta-template/node_modules/mx-connect/examples/connect.js ]; then
+		timeout 3 node /home/zone/zone-mta-template/node_modules/mx-connect/examples/connect.js fbi.gov	
+		echo 'Testing fbi.gov if the connection fails port 25 may be blocked or';
+		echo "cd /usr/ports/dns/c-ares; make && make deinstall && make reinstall";
+		echo 'https://github.com/c-ares/c-ares/issues/757';
+		echo
+	else
+		echo 'Missing /home/zone/zone-mta-template/node_modules/mx-connect/examples/connect.js using nc';
+		nc -w 3 mx.trouble-free.net 25
+		echo
+	fi
+
+	# if node falls away from supervise the process will not restart via svc it may cause odd issues
+	if [ -x /usr/local/bin/pstree ]; then
+		nodecheck=`pstree -p  | grep -A 1 nginx | grep node`;
+		if [ ! "$nodecheck" = "" ]; then
+			echo
+			echo 'It appears some node processes were not killed with a svc run so some old node processes may be hanging';
+			echo
+			pstree
+			echo
+			echo 'To fix: svc -d /var/service/zone-mta; killall node; svc -u /var/service/zone-mta';
+			sleep 1;
+		fi
+	else
+		# I love pstree
+		echo 'Missing pstree at /usr/local/bin/pstree';
+		echo 'TO fix: pkg install psmisc';
+	fi
+
+	# uses too much ram
+	if [ -f /var/db/clamav/securiteinfoold.hdb ]; then
+		echo 'Remove /var/db/clamav/securiteinfoold.hdb and rerun freshclam to save clamav memory';
+		echo 'see https://www.securiteinfo.com/services-cybersecurite/anti-spam-anti-virus/split-securiteinfo-hdb-generates-securiteinfoold-hdb.shtml';
+		echo
+		sleep 1;
+	fi
+
+	# no longer using this for updating ports
+	if [ -d /usr/local/bin/synth ]; then
+		echo '	/usr/local/bin/synth exists this can be removed with pkg delete synth';
+		sleep 1;
+	fi
+
+	# this will mess up pkg update
+	if [ -f /usr/local/etc/synth/synth.ini ]; then
+		echo '	/usr/local/etc/synth/synth.ini exists - when pkg delete synth is run remove the dir /usr/local/etc/synth';
+		sleep 1;
+	fi
+
+	if [ -f /usr/local/etc//./pkg/repos/00_synth.conf ]; then
+		echo '	/usr/local/etc//./pkg/repos/00_synth.conf exists and can be removed';
+		sleep 1;
+	fi
+
+	if [ -d /var/service/zone-mta ]; then
+		if [ -d /var/service/redis ]; then
+			echo ' * NOTE you may not need /var/service/redis as it runs remotely';
+			echo
+			sleep 1;
+		fi
+
+		if [ ! -d /var/service/redis-pwcache ]; then
+			echo '	* NOTE missing /var/service/redis-pwcache for pwcache in authplugin. Get it from /opt/conf/redis-pwcache on staging';
+			echo
+			sleep 1;
+		fi
+
+		if [ ! -d /var/service/redis-spfcache ]; then
+                        echo '  * NOTE missing /var/service/redis-spfcache for spfcache python-spf. Get it from /opt/conf/redis-spfcache on staging';
+                        echo
+                        sleep 1;
+		else
+			if [ ! -f /home/zone/zone-mta-template/./node_modules/python-spfcheck2/__pycache__/spfcheck2.cpython-311.pyc -a ! -f /home/zone/zone-mta-template/./node_modules/python-spfcheck2/__pycache__/spfcheck2.cpython-39.pyc -a ! -f /home/zone/zone-mta-template/./node_modules/python-spfcheck2/__pycache__/spfcheck2.cpython-38.pyc -a ! -f /home/zone/zone-mta-template/./node_modules/python-spfcheck2/__pycache__/spfcheck2.cpython-37.pyc ]; then
+				echo ' * MISSING python compile /home/zone/zone-mta-template/./node_modules/python-spfcheck2/__pycache__/spfcheck2.cpython-3X?.pyc';
+				echo 'sudo -u zone python -m py_compile /home/zone/zone-mta-template/./node_modules/python-spfcheck2/spfcheck2.py';
+				echo
+				sleep 1;
+			fi
+
+			if [ ! -d /home/zone/zone-mta-template/./node_modules/python-spfcheck2/__pycache__/ ]; then
+				echo ' * /home/zone/zone-mta-template/./node_modules/python-spfcheck2/__pycache__/ missing this folder';
+				sleep 1;
+			else
+				pyccheck=`ls -L /home/zone/zone-mta-template/./node_modules/python-spfcheck2/__pycache__/ | grep pyc$ | wc -l | awk '{print $1}'`;
+				if [ ! "$pyccheck" = "1" ]; then
+					echo " * !!!! Multiple pyc files in /home/zone/zone-mta-template/./node_modules/python-spfcheck2/__pycache__/ could cause bad magic number recompile this like ";
+					echo "sudo -u zone python -m py_compile /home/zone/zone-mta-template/./node_modules/python-spfcheck2/spfcheck2.py";
+					sleep 5;
+					echo
+				fi
+			fi
+		fi
+
+		for redisconf in /usr/local/etc/redis-pwcache.conf /usr/local/etc/redis-spfcache.conf; do
+			if [ ! -f $redisconf ]; then
+				echo " 	* MISSING redis config $redisconf";
+				echo
+				sleep 1;
+			fi
+		done
+
+		rcheck=`grep ^redis_enable=\"YES\" /etc/rc.conf`;
+		if [ ! "$rcheck" = "" ]; then
+			echo '	* NOTE disable redis_enable in /etc/rc.conf';
+			echo
+			sleep 1;
+		fi
+	fi
+
+	# check pf firewall is enabled
+	if [ -x /sbin/pfctl ]; then
+		pfcheck=`pfctl -s info | grep "^Status" | cut -d: -f2 | awk '{print $1}'`;
+		if [ ! "$pfcheck" = "Enabled" ]; then
+		echo '	* WARN PF Fireall is not Enabled';
+			sleep 1;
+		fi
+	else
+		echo '	* WARN missing /sbin/pfctl';
+		sleep 1;
+	fi
+
+	if [ -f /etc/ssh/sshd_config ]; then
+		sshdcheck=`grep ^AllowUsers /etc/ssh/sshd_config`;
+		if [ "$sshdcheck" = "" ]; then
+			echo '	* WARN AllowUsers not set in /etc/ssh/sshd_config';
+			echo '	TO FIX add to /etc/ssh/sshd_config';
+			echo ' AllowUsers root@66.45.228.251 root@66.23.229.220 quags@64.20.60.242';
+			echo
+			echo ' and run /etc/rc.d/sshd restart';
+			echo
+			sleep 1;
+		fi
+	else
+		echo '	* HUH Missing /etc/ssh/sshd_config ?';
+		sleep 1;
+	fi
+
+	# files we do not need
+	if [ -d /home/zone/zone-mta-template ]; then
+		export notneedfound=0;
+		for notneeded in queue-server.js plugin-handler.js mail-queue.js list interserver-xauthuser-add.js.old backup.users api-server.js blah bounces.txt dd.js.old plugins.7.6 update update config/dbs.toml.old config/zonemta.toml.old queue.toml.old smtp-interface.js default.js plugins/queue.toml.old relay0 queue.toml.old config/relay0.toml config/relay1 config/relay1.toml config/relay2 config/relay2.toml config/relay3 config/relay3.toml; do
+			if [ -e /home/zone/zone-mta-template/${notneeded} ]; then
+				export notneedfound=1;
+				echo -n "* Found file that is not needed: /home/zone/zone-mta-template/${notneeded} ";
+			fi
+		done
+		if [ "$notneedfound" = "1" ]; then
+			echo
+			echo ' * Found uneeded files above';
+			sleep 2;
+			echo;
+		fi
+		if [ -f /var/service/razor-agent.log ]; then
+			echo '	* NOTE you can remove /var/service/razor-agent.log';
+			echo
+			sleep 1;
+		fi
+		if [ -f /var/db/redis/dump.rdb ]; then
+			echo '	* NOTE /var/db/redis/dump.rdb can be removed on zonemta systems';
+			echo
+			sleep 1;
+		fi
+	fi
+
+	iszfs=`df -m | grep zroot`;
+	if [ ! "$iszfs" = "" ]; then
+		health=$(zpool status -x)
+		if [ ! "$health" = "all pools are healthy" ]; then
+			echo '  * WARN possible zfs errors';
+			zpool list
+			echo
+			sleep 2;
+		fi
+		diskcheck=`df -m | grep zroot | awk '{print $5}' | egrep "99%|100%"`;
+		if [ ! "$diskcheck" = "" ]; then
+			echo '	* WARN partition is over 99% full';
+			df -m | egrep "99%|100%"
+			echo
+			sleep 2;
+		fi
+	fi
+
+	# redis6 won't start the auth plugin cache or spf cache configs
+	# need to skip php-8.1-redis-6
+	redisversion=`pkg info | grep redis-6 | grep -v ^php`;
+	if [ ! "$redisversion" = "" ]; then
+		echo "	* WARN pkg info shows redis-6 installed. You must upgrade to redis7+";
+		echo 'To fix: pkg delete redis; pkg install redis';
+		echo
+		sleep 2;
+	fi
+
+	# check for crashing node was one zmta web admin
+	dmesgcheck=`dmesg | grep ^pid | grep exited`;
+	if [ ! "$dmesgcheck" = "" ]; then
+		echo "	* WARN dmesg shows crashes in programs";
+		dmesg | grep ^pid | grep exited
+		echo 'If its zmta-webadmin reinstall libuv';
+		echo
+		sleep 2;
+	fi
+
+	# issue on la-relay0
+	checkforrediserror=`tail -n 10000 /var/log/zonemta.log  | grep -i "Cannot find module 'redis'"`;
+	if [ ! "$checkforrediserror" = "" ]; then
+		echo "	* WARN /var/log/zonemta.log shows can not find module redis";
+		echo "The fix on la-relay0 was: 1) delete and reinstall node and npm in pkg 2) update package.json remove package-lock.json 3) npm install / npm audit fix";
+		echo
+		sleep 2;
+	fi
+
+	supervisecheck=`grep ^svscan_enable=\"YES\" /etc/rc.conf`;
+	if [ "$supervisecheck" = "" ]; then
+		echo "	* WARN supervise / svscan_enable not set to YES in /etc/rc.conf";
+		echo 'also skipping razor check due to svscan_enable set to NO';
+		sleep 2;
+	else
+		# simple check for if razor is running
+		razortest=`timeout 10 /usr/local/bin/razorsocket 2>&1 | head -n 1 | cut -c1-3`;
+		if [ "$razor" = "Can" ]; then
+			echo ' * ERROR /usr/local/bin/razorsocket does not pass checks razor-agents may be missing';
+			echo
+			sleep 2;
+		fi
+	fi
+
+	# relay servers need mailparse
+	if [[ $hostname =~ relay ]]; then
+		
+		if [ ! -f /usr/local/etc/php/ext-20-mailparse.ini -a ! -f /usr/local/etc/php/ext-30-mailparse.ini ]; then
+			echo '	* MISSING mailparse in php on a relay system';
+			echo 'To Fix: cd /usr/ports/mail/pecl-mailparse; make install clean';
+			echo
+			sleep 2;
+		fi
+
+		if [ -f /usr/local/etc/php/ext-30-mailparse.ini -a -f /usr/local/etc/php/ext-20-mailparse.ini ]; then
+			echo '	* NOTE /usr/local/etc/php/ext-30-mailparse.ini and /usr/local/etc/php/ext-20-mailparse.ini exist remove one of them';
+			sleep 2;
+		fi
+
+	fi
+
+	if [ -f /var/mail/root ]; then
+		ducheckmail=`du -sm /var/mail/root | awk '{print $1}'`;
+		if [ "$ducheckmail" -gt "5000" ]; then
+			echo "	* WARN you have a large /var/mail/root file at $ducheckmail";
+			echo '	TO Fix: echo > /var/mail/root';
+			sleep 2;
+		fi
+	fi
+
+	if [ -f /home/zone/.razor/razor-agent.log ]; then
+		/bin/rm /home/zone/.razor/razor-agent.log
+	fi
+
+	if [ ! -f /usr/local/sbin/tmpwatch ]; then
+		echo ' * WARN missing /usr/local/sbin/tmpwatch';
+		echo 'pkg install tmpwatch';
+		echo 'Add to cron @daily tmpwatch -c 24 -v /tmp';
+		sleep 2;
+	fi
+
+	if [ -d /var/service ]; then
+		permissioncheck=`ls -l /var/service | grep -v ^total | awk '{print $3}' | grep '[0-9]\+'`;
+		if [ ! "$permissioncheck" = "" ]; then
+			echo "	* WARN there are some permissions in /var/service that are set to non existant users";
+			ls -l /var/service
+			sleep 2;			
+		fi
+	fi
+
+	echo
+	sleep 1
+	freshclam
+	echo
+
+	if [ -x /usr/local/bin/php ]; then
+		phpcheck=`/usr/local/bin/php -v | grep ^PHP | awk '{print $2}' | cut -d. -f1-2`;
+		if [ ! "$phpcheck" = "$latestphp" ]; then
+			echo "API systems should move to $latestphp";
+			php -v
+			echo "https://wiki.interserver.net/index.php/Mailbaby#update_php_from_8.0_to_8.1_on_api_systems";
+			sleep 1;
+			echo
+		fi
+	fi
+
+	# check for spf errors
+	if [ -f /var/log/zonemta.log ]; then
+		badmagic=`tail -n 10000 /var/log/zonemta.log  | grep "Bad magic number in .pyc file" | tail -n 2`;
+		if [ ! "$badmagic" = "" ]; then
+			echo "spf error please run cd /home/zone/zone-mta-template/node_modules/python-spfcheck2/__pycache__; rm -f *pyc; sudo -u zone python -m py_compile /home/zone/zone-mta-template/./node_modules/python-spfcheck2/spfcheck2.py";
+			echo
+		fi
+	fi
+
+	if [ -e /var/log/zonemta.log ]; then
+		checkref=`tail -n 2000 /var/log/zonemta.log | grep "ReferenceError\:"`;
+		if [ ! "$checkref" = "" ]; then
+			echo "	* NOTE nodejs reference errors show in /var/log/zonemta.log";
+			printf "$checkref";
+			echo
+			sleep 1;
+		fi
+	fi
+
+	if [ ! -x /usr/local/bin/socat ]; then
+		echo * 'Missing socat install with pkg install socat';
+	else
+		if [ -e /home/haproxy/haproxy.sock ]; then
+			echo 'Haproxy state test';
+			echo "show servers state" | socat /home/haproxy/haproxy.sock stdio
+		else
+			echo '	* Missing socket for haproxy /home/haproxy/haproxy.sock: run svc -d /var/service/rspamdcluster; svc -u /var/service/rspamdcluster';
+		fi
+	fi
+
+	if [ -x /usr/local/bin/rspamc -a -f /admin/scanner/eicar.com.txt ]; then
+	echo 'Rspamc clamav check if the clamac score is 0 and not 10 there is a problem';
+		/usr/local/bin/rspamc /admin/scanner/eicar.com.txt
+		echo
+	else
+		echo 'Can not run an rspamc check missing rspamc or /admin/scanner/eicar.com.txt ';
+		echo
+	fi
+
+	if [ -x /var/service/rspamdcluster/check.sh ]; then
+		echo 'Running /var/service/rspamdcluster/check.sh';
+		/var/service/rspamdcluster/check.sh
+		sleep 2;
+	else
+		echo 'Missing /var/service/rspamdcluster/check.sh';
+	fi
+	if [ -f /usr/local/etc/rspamd/local.d/gpt.conf ]; then
+		echo 'Found gpt config testing connection';
+		curl --connect-timeout 10 https://gpt.mailbaby.net/v1/models
+		echo 'done with connect test to gpt';
+		sleep 1;
+	else
+		echo ' * Note: missing gpt config at /usr/local/etc/rspamd/local.d/gpt.conf';
+		sleep 2;
+	fi
+
+	echo
+
+	echo ' * Pool check';
+	node /home/zone/zone-mta-template/config/pools.js
+else
+	echo ' ** Missing /usr/local/bin/rspamadm';
+fi

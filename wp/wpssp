@@ -1,0 +1,134 @@
+#!/usr/bin/env bash
+
+echo 'WP SSP testing for potential wordpress errors';
+
+# testing cpanel and directadmin
+if [ ! -d /usr/local/directadmin -a ! -d /usr/local/cpanel ]; then
+        echo 'Requires cpanel or directadmin';
+        exit;
+fi
+
+# we need wpcli for many tests
+if [ ! -x /opt/wp ]; then
+        if [ -x /admin/wp/wpcli ]; then
+                /admin/wp/wpcli
+        else
+                echo 'Missing /admin/wp/wpcli can not continue';
+                exit;
+        fi
+fi
+
+# start
+
+if [ "$1" = "" ]; then
+	if [ -f wp-config.php ]; then
+		wpdir=`pwd`;
+	else
+        	echo 'Usage ./wpssp /path/to/wordpress';
+        	exit;
+	fi
+fi
+
+# check wp is there
+for checkfile in $wpdir/wp-config.php $wpdir/index.php; do
+        if [ ! -f $checkfile ]; then
+                echo "Missing $checkfile";
+                exit;
+        fi
+done
+
+# get owner we need this for sudo
+owner=`stat -c '%U' $wpdir/index.php`;
+if [ "$owner" = "root" -o "$owner" = "nobody" ]; then
+        echo "index.php owner is incorrect set as $owner";
+        exit;
+else
+	echo "Found owner $owner";
+fi
+
+# basic index.php check
+if [ ! -x /usr/bin/md5sum ]; then
+        echo 'Install /usr/bin/md5sum to check checksums';
+else
+        md5index=`md5sum $wpdir/index.php  | awk '{print $1}'`;
+        if [ ! "$md5index" = "926dd0f95df723f9ed934eb058882cc8" ]; then
+                echo ' * WARN index.php does not match checksum 926dd0f95df723f9ed934eb058882cc8';
+                sleep 2;
+        else
+                echo 'index.php passes checksum';
+        fi
+fi
+
+if [ ! -x /usr/bin/sudo ]; then
+        echo 'Missing /usr/bin/sudo for further tests';
+        exit;
+fi
+
+if [ ! -x /usr/bin/timeout ]; then
+	echo 'Missing /usr/bin/timeout';
+	exit;
+fi
+
+#cur dir
+pwd=`pwd`;
+# move to wp dir
+cd $wpdir
+
+for folder in wp-content/plugins wp-content/themes; do
+	if [ ! -d $folder ]; then
+		echo "Warning missing folder $folder";
+		sleep 1
+	fi
+done
+
+for plugin in js_composer revslider elementor-pro; do
+	if [ -d wp-content/plugins/$plugin ]; then
+	echo "Found common plugin with security issues $plugin";
+		sleep 1;
+	fi
+done
+
+if [ ! -f .htaccess ]; then
+	echo 'Missing .htaccess';
+	sleep 1;
+fi
+
+if [ -f wp-admin/.htaccess ]; then
+	echo 'Found uncommon wp-admin/.htaccess';
+	cat wp-admin/.htaccess
+	sleep 1;
+fi
+
+#wpcli commands
+# version
+echo 'Version';
+timeout 10 sudo -u $owner /opt/wp core version
+echo;
+sleep 1;
+
+#theme list
+echo 'Themes';
+timeout 10 sudo -u $owner /opt/wp theme list
+echo;
+sleep 1;
+
+echo 'Plugins';
+timeout 10 sudo -u $owner /opt/wp plugin list
+echo;
+sleep 1;
+
+echo 'siteurl'
+timeout 10 sudo -u $owner /opt/wp option get siteurl
+echo;
+sleep 1;
+
+echo 'Checking checksums';
+timeout 10 sudo -u $owner /opt/wp core verify-checksums
+echo;
+sleep 1
+
+echo 'You can use a script like this to remove a lot of files that does not exist';
+echo 'for i in `cat 1 | grep not | awk '{print $6}' | egrep ".php|.htaccess"`; do /bin/rm -v $i; done';
+# back to cur dir and done
+cd $pwd
+

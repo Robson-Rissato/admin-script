@@ -1,0 +1,20 @@
+NAME='e2fsprogs';
+VERSION='1.43.3';
+MD5='81cc39c98c918fa60aaa47887445400c';
+EXT='tar.gz';
+DEPS='gcc gcc-c++ patch';
+CONFIG='./configure --prefix=/opt/e2fsprogs';
+MAKE='make';
+MAKEINSTALL='make install';
+#PATCH='p1:01-head_20060918:ed410ee49a50728b640b3fbaf3c5e291'
+#PATCH1='p1:02-percent:d6116088669dc5cff1a69fbe1e46b5af'
+#PATCH2='p1:03-inode_prealloc:c0a5f5bfb312c622883f15e2a4a9a24b'
+#PATCH3='p1:04-extents:01cdc67930bafae9a67260f04080172f'
+#PATCH4='p1:05-extents_htree:6617cb09124bf59cc92d12abd704cc6f'
+#PATCH5='p1:06-eacheck:8651201d299f3438b86344ff387e19fd'
+#PATCH6='p1:07-pblk_ondisk_blocknum:a895f24b20d821b0d4667f1271c05d91'
+#PATCH7='p1:08-use_64bit_io:15ba6f6a7a8ec53cc2d7b1fc8f87f407'
+#PATCH8='p1:09-use_64bit_block_numbers:dd7ffc790f3cc87602abcd86fa12d18a'
+#PATCH9='p1:10-extents_48bit_block_numbers:973f0f120abcec93bc413b08a983613c'
+#PATCH10='p1:11-desc_size:a6e69fb59368f33151f4d3554108880d'
+#PATCH11='p1:12-move_block_number_hi_bits:c7e5b3a01080c1d9ffd263c38c928639'

@@ -1,0 +1,28 @@
+loadplugin Mail::SpamAssassin::Plugin::iXhash  /etc/mail/spamassassin/iXhash.pm
+
+# Timeout in seconds - default is 10 seconds
+ixhash_timeout          10
+
+# Should be add hashes generated to the messages' metadata for later re-use
+use_ixhash_cache        1
+
+# flag to only use perl (ixhash_pureperl = 1) or the system's 'tr' and 'md5sum'
+ixhash_pureperl         1
+
+# If you should have 'tr' and/or 'md5sum' in some weird place
+# or you specify which version to use ypu can specifiy the exact paths here
+# Default is to have SpamAssassin find the executables
+#ixhash_tr_path          "/usr/bin/tr"
+#ixhash_md5sum_path      "/usr/bin/md5sum"
+
+body            MAILBABY_IXHASH eval:ixhashtest('mailbaby.ixhash.interserver.net')
+describe        MAILBABY_IXHASH iXhash found @ mailbaby.ixhash.interserver.net
+tflags          MAILBABY_IXHASH net
+# adjust as you seem fit
+score           MAILBABY_IXHASH 4.0
+
+body            MAILBABY_GENERIC_IXHASH eval:ixhashtest('mailbaby.ixhashgeneric.interserver.net')
+describe        MAILBABY_GENERIC_IXHASH iXhash found @ mailbaby.ixhashgeneric.interserver.net
+tflags          MAILBABY_GENERIC_IXHASH net
+# adjust as you seem fit
+score           MAILBABY_GENERIC_IXHASH 1.0

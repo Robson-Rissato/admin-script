@@ -1,0 +1,17 @@
+#!/bin/sh
+
+echo 'Updating locate, this make take some time';
+
+if [ -e /etc/master.passwd ]; then
+	if [ -e /usr/local/bin/gupdatedb ]; then
+		if [ ! -d /usr/local/var/ ]; then
+			mkdir /usr/local/var/
+		fi
+		/usr/local/bin/gupdatedb
+	else
+		/usr/libexec/locate.updatedb
+	fi
+else
+	renice -10 -p $$ >/dev/null 2>&1
+        /usr/bin/updatedb -f "nfs,smbfs,ncpfs,proc,devpts" -e "/tmp,/root,/usr,/var,/etc,/sbin,/lib,/afs,/net"
+fi

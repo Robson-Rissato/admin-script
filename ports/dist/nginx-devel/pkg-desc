@@ -1,0 +1,2 @@
+nginx [engine x] is a HTTP server and mail proxy server written by Igor Sysoev. It has been running on many heavily loaded Russian sites for more
+than two years. In March 2007 about 20% of all Russian virtual hosts were served or proxied by nginx.

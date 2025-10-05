@@ -1,0 +1,102 @@
+#!/bin/bash
+
+# these need to exist to run
+for exists in /root/cpaneldirect /usr/local/lsws/conf/httpd_config.xml /etc/cagefs/cagefs.mp /root/.swift/config /bin/cagefs.server /usr/local/lsws /usr/local/cpanel; do
+	if [ ! -e "$exists" ]; then
+		echo "Missing $exists";
+		exit;
+	fi
+done
+
+# this should exist to run everything
+if [ ! -x /admin/configs/spam ]; then
+	echo 'Where is /admin/configs/spam';
+	exit;
+fi
+
+# prep modsec rules
+mkdir -p /etc/asl
+touch /etc/asl/whitelist
+mkdir /etc/apache2/modsecurity.d/
+
+rsync -a rsync://rsync.is.cc/modsecurity/ /admin/modsecurity/
+
+if [ ! -f /admin/modsecurity/00_asl_whitelist.conf ]; then
+	echo 'Failed to fetch modsec rules';
+	exit;
+fi
+
+if [ -f /etc/apache2/conf.d/modsec2.imunify.conf ]; then
+	echo 'Imunify detected';
+	cp /admin/modsecurity/00_asl_whitelist.conf /etc/apache2/modsecurity.d/
+	cp /admin/00_int_rbl.conf /etc/apache2/modsecurity.d/
+	if [ ! -f /etc/apache2/conf.d/modsec/modsec2.user.conf ]; then
+		echo 'Missing /etc/apache2/conf.d/modsec/modsec2.user.conf';
+		exit;
+	fi
+
+cat > /etc/apache2/conf.d/modsec/modsec2.user.conf <<EOF
+Include /etc/apache2/modsecurity.d/00_asl_whitelist.conf
+Include /etc/apache2/modsecurity.d/00_int_rbl.conf
+EOF
+fi
+
+
+# not compatible with litespeed
+yum -y remove ea-apache24-mod_ruid2-0.9.8-15.el7.cloudlinux.x86_64
+
+# for virus scan
+
+touch /root/tmp/_clammail
+touch /root/tmp/_wpmanaged
+
+# int.conf security
+touch /etc/apache2/conf.d/includes/pre_virtualhost_global.conf
+
+check=`cat /etc/apache2/conf.d/includes/pre_virtualhost_global.conf | grep wp-config.php`;
+if [ "$check" = "" ]; then
+cat >> /etc/apache2/conf.d/includes/pre_virtualhost_global.conf <<EOF
+<Location /wp-config.php>
+Deny From All
+</Location>
+EOF
+fi
+
+
+# CPANEL RPM for php
+for rpm in ea-php71 ea-php72; do
+	yum -y install ${rpm}-libc-client ${rpm}-php-bcmath ${rpm}-php-bz2 ${rpm}-php-calendar ${rpm}-php-cli ${rpm}-php-common ${rpm}-php-curl ${rpm}-php-devel ${rpm}-php-exif ${rpm}-php-fileinfo ${rpm}-php-gd ${rpm}-php-gettext ${rpm}-php-iconv ${rpm}-php-imap ${rpm}-php-intl ${rpm}-php-litespeed ${rpm}-php-mbstring ${rpm}-php-mcrypt ${rpm}-mysqlnd ${rpm}-php-opcache ${rpm}-php-pdo ${rpm}-php-soap ${rpm}-php-sockets ${rpm}-php-xml ${rpm}-php-zip
+done
+
+if [ ! -d /opt/cpanel/ea-php71 ]; then
+	echo 'Where is /opt/cpanel/ea-php71';
+	exit
+fi
+
+/admin/configs/spam
+/admin/ml/intcsf
+/admin/configs/cpanel/enablerbl
+/admin/configs/cpanel/cpaneltemplate
+
+yum -y install alt-php56-suhosin alt-php55-suhosin GeoIP
+
+cp /usr/local/lsws/conf/httpd_config.xml /usr/local/lsws/conf/httpd_config.xml.mmdrop
+cp /admin/configs/httpd_config.xml /usr/local/lsws/conf/httpd_config.xml
+cp /admin/configs/cpanel/phpint.ini /opt/cpanel/ea-php71/root/etc/phpint.ini
+cp /admin/configs/cpanel/phpint.ini /opt/cpanel/ea-php72/root/etc/phpint.ini
+
+
+if [ "$(grep mmdrop /etc/cagefs/cagefs.mp)" = "" ]; then
+ echo 'adding to cagefs';
+ echo "@/phpmmdrop,777" >> /etc/cagefs/cagefs.mp
+ cagefsctl --remount-all
+fi
+
+yum -y install tmpwatch sudo vim-minimal mlocate rsync lftp wget
+cagefsctl --addrpm tmpwatch vim-minimal lftp
+/usr/local/lsws/admin/misc/lsup.sh -f
+yum -y update
+sleep 1s;
+cagefsctl --force-update
+nohup updatedb &
+/admin/wp/wpcli

@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+
+# basic start of parting rtreport with out logging into system
+
+if [ ! -d /usr/local/lsws ]; then
+	echo 'Litespeed is not installed';
+	exit;
+fi
+
+if [ -d /usr/local/directadmin ]; then
+	catprog='sudo -u apache cat';
+else
+	catprog='sudo -u nobody cat';
+fi
+
+if [ -f /dev/shm/lshttpd/status/.rtreport ]; then
+	lsfile=/dev/shm/lshttpd/status/.rtreport;
+	if [ -f /dev/shm/lshttpd/status/.rtreport.2 ]; then
+		rt2=1;
+	fi
+elif [ -f /tmp/lshttpd/.rtreport ]; then
+	lsfile=/tmp/lshttpd/.rtreport;
+else
+	echo 'Can not find rtreport';
+fi
+
+${catprog} ${lsfile} | grep APVH | awk '{print $2 " " $7 " "  $8 " " $5 " " $6 '} | egrep -v LSAPI] | grep -v "0,$" | cut -d, -f1-2 | sort -n -k5
+echo
+${catprog} ${lsfile} | grep LSAPI] | grep APVH_ | awk '{print $4 " " $5 " " $6 " " $7 " " $8 " " $9 " " $10 " " $11 " " $12}' | cut -d, -f1-3 | sort -n -k7
+
+if [ "$rt2" = "1" ]; then
+	${catprog} ${lsfile}.2 | grep APVH | awk '{print $2 " " $7 " "  $8 " " $5 " " $6 '} | egrep -v LSAPI] | grep -v "0,$" | cut -d, -f1-2 | sort -n -k5
+	echo
+	${catprog} ${lsfile}.2 | grep LSAPI] | grep APVH_ | awk '{print $4 " " $5 " " $6 " " $7 " " $8 " " $9 " " $10 " " $11 " " $12}' | cut -d, -f1-3 | sort -n -k7
+fi

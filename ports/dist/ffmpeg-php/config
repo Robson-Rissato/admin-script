@@ -1,0 +1,10 @@
+NAME='ffmpeg-php';
+VERSION='517';
+MD5='f617c291f128ea6ad585a1f06e852234';
+EXT='tgz';
+DEPS='gcc gcc-c++';
+FILES='/usr/bin/phpize /usr/local/bin/ffmpeg:ffmpeg';
+CONFIG='/usr/bin/phpize && ./configure --enable-shared';
+MAKE='make';
+MAKEINSTALL='make install install';
+DIRNAME='ffmpeg-php';

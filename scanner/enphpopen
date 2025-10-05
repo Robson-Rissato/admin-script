@@ -1,0 +1,42 @@
+#!/bin/bash
+
+if [ ! -e /usr/local/lsws ]; then
+	echo 'Designed for litespeed';
+	exit;
+fi
+
+if [ ! -f /var/cpanel/cpanel.config ]; then
+	echo '/var/cpanel/cpanel.config not found';
+	exit;
+fi
+
+/admin/scanner/rcache.sh
+
+if [ ! -e /opt/cpanel/ea-php56/root/usr/lib64/php/modules/realpath_turbo.so ]; then
+	echo 'Did not find ea-php56 realpath_turbo.so';
+	exit;
+fi
+
+check=$(grep "phpopenbasedirhome" /var/cpanel/cpanel.config)
+if [ "$check" = "phpopenbasedirhome=1" ]; then
+	echo 'openbasedir is enabled';
+	exit;
+else
+	echo 'openbasedir is not enabled';
+	/admin/replace-linux phpopenbasedirhome=0 phpopenbasedirhome=1 -- /var/cpanel/cpanel.config && /usr/local/cpanel/scripts/restartsrv_cpsrvd
+	# this no longer works
+	#whmapi1 set_tweaksetting key=phpopenbasedirhome value=1
+fi
+
+# addon domain protection
+cp -u -v /admin/scanner/ssl_vhost.local /admin/scanner/vhost.local /var/cpanel/templates/apache2_4
+chmod 0640 /var/cpanel/templates/apache2_4/vhost.local
+chmod 0640 /var/cpanel/templates/apache2_4/ssl_vhost.local
+
+/usr/local/cpanel/bin/build_apache_conf
+/usr/local/lsws/bin/lswsctrl restart
+# suhosin + eval
+if [ -e /etc/cl.selector/php.conf ]; then
+	cp -u -f /admin/configs/etc_cl.selector_php.conf /etc/cl.selector/php.conf
+	cagefsctl --force-update
+fi

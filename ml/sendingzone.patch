@@ -1,0 +1,19 @@
+--- sending-zone.js     2025-07-24 14:06:16.597531000 -0400
++++ /usr/home/zone/zone-mta-template/node_modules/zone-mta/lib/sending-zone.js  2025-07-24 15:31:59.633881000 -0400
+@@ -382,11 +382,12 @@
+             '' +
+             // from ehlokeyword
+             'from' +
+-            (delivery.transhost ? ' ' + delivery.transhost : '') +
++            //(delivery.transhost ? ' ' + delivery.transhost : '') +
++           ' mb-nj-kvm1.internal (mb-nj-kvm1.internal [10.10.2.10])\r\n' +
+             // [1.2.3.4]
+-            ' ' +
+-            origin +
+-            (originhost ? '\r\n' : '') +
++            //' ' +
++            //origin +
++            //(originhost ? '\r\n' : '') +
+             // (Authenticated sender: username)
+             (delivery.user ? ' (Authenticated sender: ' + delivery.user + ')\r\n' : !originhost ? '\r\n' : '') +
+             // by smtphost

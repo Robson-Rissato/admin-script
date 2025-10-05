@@ -1,0 +1,30 @@
+#!/bin/sh
+
+# usage sha256check name.patch shasum
+# returns 1 if good
+# only supports freebsd currently
+
+if [ "$1" = "" -o "$2" = "" ]; then
+	echo 0;
+	echo "usage sha256check name.patch shasum"
+	exit;
+fi
+
+# freebsd
+if [ -e /etc/master.passwd ]; then
+	# /sbin/sha256sum /root/tmp | awk '{print $4}'
+	if [ -e /sbin/sha256 ]; then
+		check=`/sbin/sha256 /root/tmp/$1 | awk '{print $4}'`;
+		if [ "$check" = "$2" ]; then
+			echo 1;
+			exit;
+		else
+			#bad shasum
+			echo 0;
+			exit;
+		fi
+	else
+		echo 0
+		exit;
+	fi
+fi

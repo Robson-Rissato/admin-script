@@ -1,0 +1,29 @@
+#!/bin/bash
+
+if [ -x /usr/bin/wget ]; then
+	if [ -d /opt ]; then
+		wget -O /opt/wp https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar
+		chmod +x /opt/wp
+		# in da we use bubble wrap so its in another location *expect on cloudlinux servers
+		if [ -d /usr/local/directadmin ] ; then
+			if [ ! -x /usr/sbin/cagefsctl ]; then
+				cp /opt/wp /usr/local/directadmin
+				wploc='/usr/local/directadmin/wp';
+			else
+				wploc='/opt/wp';
+			fi
+		else
+			wploc='/opt/wp';
+			echo 'use this for path';
+			echo 'export PATH=/opt/cpanel/ea-php74/root/usr/bin:$PATH'
+			echo
+			echo '/opt/wp core verify-checksums'
+			echo
+		fi
+		echo "$wploc core verify-checksums; $wploc core update --minor; $wploc plugin update --all; $wploc theme update --all; $wploc plugin verify-checksums --all";
+	else
+		echo '/opt does not exist';
+	fi
+else
+	echo '/usr/bin/wget does not exist';
+fi

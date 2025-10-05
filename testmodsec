@@ -1,0 +1,3 @@
+#!/bin/bash
+
+wget --timeout=15 -O /dev/null http://localhost/?foo=http://www.example.com

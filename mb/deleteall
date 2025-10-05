@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+
+if [ "$1" = "" ]; then
+        echo './usage deleteall domaintodelete|noresolv|networkerror|stf to|from|user (default is from)';
+        exit;
+fi
+
+debug=0;
+
+if [ "$2" = "" ]; then
+        tofrom=from;
+elif [ "$2" = "to" ]; then
+        tofrom=to;
+elif [ "$2" = "user" ]; then
+        tofrom=user;
+else
+        echo './usage deleteall domaintodelete to|from (default is from) - doing FROM';
+        tofrom=from;
+fi
+
+if [ "$1" = "noresolv" ]; then
+        echo 'Looking for 550 DNS error when resolving MX server';
+        domaintodelete="550 DNS error when resolving"
+        tofrom="response";
+elif [ "$1" = "stf" ]; then
+        echo 'looking for sending too fast';
+        domaintodelete="550 5.7.1 \[STF\] Sending too fast";
+        tofrom="response";
+elif [ "$1" = "networkerror" ]; then
+        echo 'looking for 450 Network error when connecting';
+        domaintodelete="450 Network error when connecting";
+        tofrom="response";
+elif [ "$1" = "from" ]; then
+	echo 'invalid data to delete enter the full domain from is assumed';
+	exit;
+elif [ "$1" = "to" ]; then
+        echo 'invalid data to delete enter the full domain first to delete';
+	exit;
+else
+        domaintodelete=$1;
+fi
+
+if [[ "$1" =~ \. ]]; then
+	echo "we will delete $1";
+	sleep 5;
+else
+	echo "$1 does not have a period in it for a domain not continuing";
+	exit;
+fi
+
+for zone in bounces mailchannels default fallback1 fwd good grey interserver neutral rspamd; do
+        for queue in active deferred; do
+                echo "working on zone $zone  queue $queue";
+                sleep 1
+                for mid in `curl --silent http://localhost:12080/queued/$queue/$zone | jq | grep id | cut -d\" -f4`; do
+                        check=`curl --silent http://localhost:12080/message/$mid| jq | grep "${domaintodelete}" | grep "${tofrom}"`;
+                        if [ ! "$check" = "" ]; then
+                                if [ "$debug" = "0" ]; then
+                                        echo
+                                        curl -XDELETE http://localhost:12080/message/$mid/
+                                        echo "deleted $mid"
+                                else
+                                        echo
+                                        echo "I would have deleted $mid";
+                                        echo
+                                fi
+                        else
+                                if [ "$debug" = "1" ]; then
+                                        echo
+                                        echo "I would have NOT deleted and skipped $mid";
+                                        echo
+                                fi
+                        fi
+                done
+                echo "done on $zone $queue";
+                sleep 1
+        done
+done

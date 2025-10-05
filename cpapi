@@ -1,0 +1,143 @@
+#!/usr/bin/env bash
+
+# modified 3/19/2025
+# basic set up to create sessions of users (including WHM)
+# added support for spanel
+
+if [ "$1" = "" ]; then
+        echo 'Usage ./cpapi username';
+        exit;
+fi
+
+myuser=$1;
+
+if [ -e /usr/local/cpanel/cpanel.lisc ]; then
+        if [ "${myuser}" = "root" ]; then
+                if [ -x /sbin/whmlogin ]; then
+                        /sbin/whmlogin
+                else
+                        whmapi1 create_user_session user=root service=whostmgrd locale=en
+                fi
+        else
+                if [ -f /var/cpanel/users/${myuser} ]; then
+                        if [ -e /usr/sbin/whmapi1 ]; then
+                                whmapi1 create_user_session user=${myuser} service=cpaneld locale=en
+                        else
+                                echo 'Missing /usr/sbin/whmapi1';
+                                exit;
+                        fi
+                else
+                        echo "/var/cpanel/users/${myuser} does not exist";
+                        exit;
+                fi
+        fi
+elif [ -d /usr/local/directadmin ]; then
+        if [ "${myuser}" = "root" ]; then
+		if [ -x /usr/local/directadmin/directadmin ]; then
+			duser=`/usr/local/directadmin/directadmin admin`;
+			if [[ "$duser" =~ ^[A-Za-z0-9]+$ ]]; then
+				echo "Da detected auto found admin username as $duser";
+				myuser=$duser;
+			else
+                		echo 'DA detected you probably mean admin';
+                		myuser=admin;
+			fi
+		else
+			echo 'Missing executable /usr/local/directadmin/directadmin';
+		fi
+        fi
+        if [ -d /usr/local/directadmin/data/users/${myuser} ]; then
+		#Legacy command line arguments detected, please switch to new arguments format
+                #/usr/local/directadmin/directadmin --create-login-url user=${myuser};
+		/usr/local/directadmin/directadmin create-login-url --user=${myuser};
+        else
+                echo "user does not exist";
+        fi
+elif [ -d /var/webuzo ]; then
+
+        if [ -f /usr/local/webuzo/enduser/universal.php ]; then
+                uniloc=/usr/local/webuzo/enduser/universal.php;
+                echo 'v2';
+        elif [ -f /usr/local/webuzo/universal.php ]; then
+                echo 'v3';
+		if [ "$myuser" = "" -o "$myuser" = "root" ]; then
+			webuzo --sso
+		else
+			webuzo --sso --user=${myuser}
+		fi
+		exit;
+        else
+                echo 'Missing universal.php';
+                exit;
+        fi
+
+        cookie=`grep SOFTCookies $uniloc | cut -d\' -f4 | cut -c12-`;
+
+        session=`head /dev/urandom | tr -dc A-Za-z0-9 | head -c 32`;
+        # why??
+        cutsession=`echo $session | cut -c1-16`;
+
+        if [ -f /var/webuzo/webuzo.conf ]; then
+                myuser=`grep ^WU_USER /var/webuzo/webuzo.conf  | cut -d= -f2`;
+                mainip=`grep ^WU_PRIMARY_IP /var/webuzo/webuzo.conf | cut -d= -f2`;
+        else
+                if [ -d /var/webuzo/ips ]; then
+                        mainip=`ls /var/webuzo/ips/ | grep -v 127.0.0.1 | head -n 1`;
+                else
+                        echo 'Missing /var/webuzo/ips';
+                        exit;
+                fi
+                if [ "$1" = "" -o "$1" = "root" ]; then
+                        myuser=root;
+                        echo 'Defaulting to user root';
+                else
+                        if [ ! -d /var/webuzo/users/$1 ]; then
+                                echo "$1 user does not exist in /var/webuzo/users";
+                                exit;
+                        fi
+                fi
+        fi
+
+        echo -n $myuser > /var/webuzo/sessions/sess_${session}
+
+        if [ -f /var/webuzo/webuzo.conf ]; then
+                chmod 600 /var/webuzo/sessions/sess_${session}
+                echo "https://${mainip}:2003/sess${cutsession}/is_api.php?sess=${session}&cookie=${cookie}";
+                if [ ! -f /usr/local/webuzo/enduser/webuzo/is_api.php ]; then
+                        cp /admin/configs/webuzo/api.php /usr/local/webuzo/enduser/webuzo/is_api.php
+                fi
+
+                # remove old version
+                if [ -f /usr/local/webuzo/enduser/webuzo/api.php ]; then
+                        /bin/rm -v /usr/local/webuzo/enduser/webuzo/api.php
+                fi
+        else
+                if [ -d /usr/local/webuzo/web ]; then
+
+                        chmod 600 /var/webuzo/sessions/sess_${session}
+                        chown webuzo /var/webuzo/sessions/sess_${session}
+                        if [ "$1" = "root" -o "$1" = "" ]; then
+                                if [ ! -f /usr/local/webuzo/web/admin/is_api.php ]; then
+                                        cp /admin/configs/webuzo/api.php /usr/local/webuzo/web/admin/is_api.php
+                                fi
+                                echo "https://${mainip}:2005/sess${cutsession}/is_api.php?sess=${session}&cookie=${cookie}";
+                        else
+                                if [ ! -f /usr/local/webuzo/web/enduser/is_api.php ]; then
+                                        cp /admin/configs/webuzo/api.php /usr/local/webuzo/web/enduser/is_api.php
+                                fi
+                                echo "https://${mainip}:2003/sess${cutsession}/is_api.php?sess=${session}&cookie=${cookie}";
+                        fi
+                else
+                        echo 'Missing /usr/local/webuzo/web';
+                fi
+        fi
+elif [ -f /etc/spanel/passwd ]; then
+	if [ -x /scripts/sadmin ]; then
+		/scripts/sadmin grant
+	else
+		echo 'spanel missing /scripts/sadmin';
+	fi
+else
+        echo 'Requires cpanel or directadmin or webuzo or spanel';
+fi
+

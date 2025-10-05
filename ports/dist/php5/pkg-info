@@ -1,0 +1,3 @@
+PHP5 is installed. You may want to check httpd.conf and make sure php4 is commented out.
+
+

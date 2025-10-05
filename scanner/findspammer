@@ -1,0 +1,120 @@
+#!/bin/bash
+
+# removed skipping
+
+echo 'Running findspammer (call with run)';
+
+IFS="
+"
+
+if [ -f /etc/exim.conf.local ]; then
+        check=$(grep mailchannels /etc/exim.conf.local);
+        if [ "$check" = "" ]; then
+                echo 'no mailchannels';
+                exit;
+        fi
+else
+        echo 'no /etc/exim.conf.local';
+        exit;
+fi
+
+datalock=/root/tmp/_findspammerlist;
+lastrun=/root/tmp/_findspammerlast;
+thisrun=/root/tmp/_findspammerthis;
+whitelist=/admin/scanner/_fswhitelist;
+masterlog=/admin/scanner/log.txt;
+date=$(date);
+
+if [ -f $datalock ]; then
+        /bin/rm -v $datalock
+fi
+
+if [ -f $thisrun ]; then
+        mv -f $thisrun $lastrun
+else
+        touch $lastrun
+fi
+
+touch $datalock
+
+echo 'checking for spamming emails';
+
+if [ "$1" = "all" -o "$2" = "all" ]; then
+        echo 'Searching all';
+        for data in $(cat /var/log/exim_mainlog | grep "550 5.7.1" | awk '{print $3}' | sort | uniq); do
+                if [[ ! "$data" =~ ^[A-Za-z0-9]{6}-[A-Za-z0-9]{6}-[A-Za-z0-9]{2}$ ]] ; then
+                        echo "$data is not a valid exim id";
+                        continue;
+                fi
+                cat /var/log/exim_mainlog | grep $data | grep dovecot_ | awk -F "A=dovecot__[a-z]*" '{print $2}' | cut -d: -f1 | awk '{print $1}'  >> $datalock
+        done
+else
+        for data in $(tail -n 3000 /var/log/exim_mainlog | grep "550 5.7.1" | awk '{print $3}' | sort | uniq); do
+                if [[ ! "$data" =~ ^[A-Za-z0-9]{6}-[A-Za-z0-9]{6}-[A-Za-z0-9]{2}$ ]]; then
+                        echo "$data is not a valid exim id";
+                        continue;
+                fi
+                tail -n 4000 /var/log/exim_mainlog | grep $data | grep dovecot_ | awk -F "A=dovecot_[a-z]*:" '{print $2}' | cut -d: -f1 | awk '{print $1}'  >> $datalock
+        done
+fi
+
+for tmpdata in $(cat $datalock | sort | uniq -c); do
+        email=$(echo $tmpdata | awk '{print $2}');
+	if [ ! "$email" = "" ]; then
+        	echo "found email $email";
+	else
+		echo 'blank email returned';
+		continue;
+	fi
+        domain=$(echo $email | cut -d@ -f2);
+        user=$(echo $email | cut -d@ -f1 | awk '{print $1}');
+        if [[ "$domain" =~ ^[A-Za-z0-9.-]+\.[A-Za-z]{2,13}$ ]]; then
+                username=$(/scripts/whoowns $domain);
+        else
+                echo "domain $domain did not validate";
+                continue;
+        fi
+        count=$(echo $tmpdata | awk '{print $1}');
+        echo "found domain $domain user $user and username $username for count $count";
+        if [ "$domain" = "" -o "$user" = "" -o "$username" = "" -o "$count" = "" ]; then
+                echo 'Got back blank variable';
+                continue;
+        fi
+
+        if [[ ! "${user}@${domain}" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,13}$ ]]; then
+                echo "Error validating email ${user}@${domain}";
+                continue;
+        fi
+        if [ -f $whitelist ]; then
+                whcheck=$(grep ${user}@${domain} $whitelist);
+                if [ "$whcheck" = "${user}@${domain}" ]; then
+                        echo "Skipping ${user}@${domain} due to WHITELIST";
+                        continue;
+                fi
+        fi
+        if [ "$1" = "run" ]; then
+
+                #emailcheck=$(grep ${user}@${domain} $lastrun);
+                #if [ "$emailcheck" = "${user}@${domain}" ]; then
+                #        echo "Skipping ${user}@${domain} due to previous run";
+                #        echo ${user}@${domain} >> $thisrun
+                #        continue;
+                #fi
+
+                if [ "$2" = "" ]; then
+                        limit=15;
+                else
+                        limit=$2;
+                fi
+
+                if [ "$count" -gt "$limit" ]; then
+                        cpapi2 --user=$username Email passwdpop domain=$domain email=$user password=`/admin/randompass`
+                        #echo ${user}@${domain} >> $thisrun;
+                        echo "EMAIL_FINDSPAMMER $date reset ${user}@${domain} for spamming count $count" >> $masterlog
+
+                else
+                        echo "Count is under $count";
+                fi
+        fi
+done
+

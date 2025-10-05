@@ -1,0 +1,125 @@
+#!/usr/bin/env bash
+
+# 07/18/2025
+# proftpd install script for directadmin storage
+# redis + proftpd + sftp
+
+# flag if already installed
+redis=0;
+echo "note call switch_to_proftpd redispassword (force)";
+
+if [ !  -d /usr/local/directadmin ]; then
+	echo 'DA required';
+	exit;
+fi
+
+if [ -e /etc/systemd/system/redis-ftp.service ]; then
+	redis=1;
+	echo 'Note: /etc/systemd/system/redis-ftp.service exists';
+	sleep 2;
+fi
+
+if [ "$1" = "" ]; then
+        echo "usage ./switch_to_proftpd go (force if needed to rerun)";
+        exit;
+fi
+
+if [ -x /admin/randompass ]; then
+	REDISPASS=`/admin/randompass`;
+else
+	echo 'Missing /admin/randompass';
+	exit;
+fi
+
+if [ "$2" = "force" ]; then
+        echo 'force install';
+else
+        if [ -x /usr/sbin/proftpd ]; then
+		isok=`proftpd -l | grep mod_tls_redis.c | awk '{print $1}'`;
+		if [ "$isok" = "mod_tls_redis.c" ]; then
+			if [ "$redis" = "1" ]; then
+				echo -n 'redis is already installed - ';
+			fi
+               		echo '/usr/sbin/proftpd exists already - run switch_to_proftpd go force';
+                	exit;
+		else
+			echo 'Missing mod_tls_redis.c force install';
+		fi
+        fi
+fi
+
+if [ ! -x /usr/bin/da ]; then
+        echo 'Missing /usr/bin/da is da too old?';
+        exit;
+fi
+
+#needed for redis
+if [ ! -e /usr/lib/x86_64-linux-gnu/libhiredis.so ]; then
+	if [ -f /etc/debian_version ]; then
+        	apt -y install libhiredis-dev
+	else
+		yum -y install hiredis-devel
+	fi
+fi
+
+if [ ! -x /usr/local/bin/redis-server ]; then
+        da build set redis yes
+        da build redis
+fi
+
+#redis folder
+mkdir -p /home/ftp
+chown ftp:ftp /home/ftp
+
+#this is the systemd redis
+
+cat > /etc/systemd/system/redis-ftp.service <<EOF
+[Unit]
+Description=Redis Server for FTP User
+After=network.target
+
+[Service]
+User=ftp
+Group=ftp
+RuntimeDirectory=redis-ftp
+RuntimeDirectoryMode=0750
+ExecStart=/usr/local/bin/redis-server --port 6679 --requirepass "${REDISPASS}" --bind 127.0.0.1 --daemonize no --supervised systemd --dir /home/ftp --dbfilename dump.rdb --logfile /home/ftp/redis-ftp.log --pidfile /home/ftp/redis-ftp.pid
+ExecStop=/usr/local/bin/redis-cli -p 6679 -a "${REDISPASS}" shutdown
+PIDFile=/home/ftp/redis-ftp.pid
+Restart=always
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# proftpd.conf for da with redis
+cp /admin/storage/config/proftpd/proftpd.conf.redis /usr/local/directadmin/custombuild/custom/proftpd/conf/proftpd.conf
+/admin/replace-linux PUTPASSHERE ${REDISPASS} -- /usr/local/directadmin/custombuild/custom/proftpd/conf/proftpd.conf
+
+# build script for proftpd with redis and sftp
+cp /admin/storage/config/proftpd/configure.proftpd.redis /usr/local/directadmin/custombuild/custom/proftpd/configure.proftpd
+chmod +x /usr/local/directadmin/custombuild/custom/proftpd/configure.proftpd
+
+if [ -f /etc/sysctl.d/99-int-sysctl.conf ]; then
+	cp -f -u /admin/storage/config/99-int-sysctl.conf /etc/sysctl.d/99-int-sysctl.conf
+else
+	cp -f /admin/storage/config/99-int-sysctl.conf /etc/sysctl.d/99-int-sysctl.conf
+fi
+
+sysctl -p
+
+# build it
+da build set ftpd "proftpd"
+da build proftpd
+da build remove_items
+systemctl enable redis-ftp.service
+systemctl daemon-reload
+systemctl start redis-ftp
+systemctl restart proftpd
+systemctl restart redis-ftp
+echo "Open port 23 in csf";
+echo 'Listing modules';
+proftpd -l
+sleep 2s;
+redis-cli -p 6679 -h localhost -a ${REDISPASS} monitor

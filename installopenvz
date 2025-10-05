@@ -1,0 +1,376 @@
+#!/bin/bash
+
+#
+# this scripts has been designed for InterServer managed servers
+#
+
+if [ ! -e /etc/redhat-release ]; then
+	echo 'Requires RHEL/CentOS';
+	exit;
+fi
+
+if [ ! "$1" = "yes" ]; then
+	echo 'Must run with yes';
+	exit;
+fi
+
+# interserver specific
+INT=1;
+if [ "$2" = "cust" ]; then
+	INT=0;
+fi
+
+if [ -e /etc/yum.repos.d/openvz.repo ]; then
+	echo 'Installer has already ran';
+	exit;
+fi
+
+#
+# start install
+#
+
+if [ "$INT" = "1" ]; then
+	mkdir -p /root/tmp /root/cpaneldirect
+fi
+
+#
+# some limited security
+#
+/admin/resolvconf
+/admin/rh9pstreefix
+/admin/sshkeyme
+
+yum clean all
+yum -y update
+yum -y remove mlocate cpuspeed
+echo "removing unneeded rpms" yum -y remove portmap nfs-utils eject bluez-utils autofs cups bluez-libs bluez-gnome cups-libs isdn4k-utils nfs-utils-lib wireless-tools slocate pcsc-lite-libs audit vconfig bind-devel xinetd exim
+
+
+if [ "$INT" = "1" ]; then
+	echo "sshd: ALL" >> /etc/hosts.deny
+	echo "sshd: 66.45.228.251" >> /etc/hosts.allow
+	echo "sshd: 66.45.228.100" >> /etc/hosts.allow
+	echo "sshd: 66.45.228.200" >> /etc/hosts.allow
+	echo "AllowUsers root@66.45.228.251 root@66.45.228.100 root@66.45.228.200" >> /etc/ssh/sshd_config
+	/admin/replace-linux "\#PermitRootLogin yes" "PermitRootLogin without-password" -- /etc/ssh/sshd_config
+	/admin/replace-linux "\#UseDNS yes" "UseDNS no" -- /etc/ssh/sshd_config
+
+	echo "from=\"66.45.228.100 66.45.228.200\",command="/root/cpaneldirect/update_program.sh" ssh-rsa AAAAB3NzaC1yc2EAAAABIwAAAIEA+GLu9k5I4w0Qc6L3AXHUEygAup/N6j35CMuSgiOAvyavr1Al9mZYV/wVWxDFXAYVojS1RTnkB2AuB8wi+QLpeOuJFiwSeH+UtEPi1S3XufoNggiDVBxi9OjvQeM51BZNowQqRjip0josBmgxGqvKWY5FDtehuw30gqehp1E6eB8= root@nucleus.interserver.net" >> /root/.ssh/authorized_keys2
+fi
+
+#
+# yum config
+#
+cd /etc/yum.repos.d/
+
+# default is centos6 now
+if [ -e /usr/share/doc/centos-release-6 ]; then
+	wget http://download.openvz.org/openvz.repo
+else
+	# centos5
+	wget http://mirror.trouble-free.net/conf/openvz.repo
+fi
+
+ln -s /usr/bin/perl /usr/local/bin/perl
+if [ ! -e /usr/share/doc/centos-release-6 ]; then
+	echo "You need to manually edit /etc/yum.repos.d/openvz.repo (rhel6 is default)";
+        echo sleeping..
+	read wait
+fi
+if [ -e /usr/share/doc/centos-release-6 ]; then
+	KERN=vzkernel
+	rpm -e cronie-anacron
+	rpm -e acpid
+	rpm -e gnome-icon-theme
+	yum -y install cronie-noanacron
+else
+	KERN=ovzkernel
+fi
+
+if [ `uname -m` = "i686" ]; then
+	yum -y install vzpkg vzyum vzrpm43-python vzrpm44-python
+	yum -y install $KERN-ent
+else
+	yum -y install $KERN.x86_64
+fi
+
+#
+# rpm install's
+#
+rpm --import  http://download.openvz.org/RPM-GPG-Key-OpenVZ
+yum -y install vzctl vzquota vzctl-lib mdadm screen php subversion
+
+if [ "$INT" = "1" ]; then
+	# needed for scripts
+	yum -y install php php-mysql php-soap php-snmp php-mhash php-mcrypt php-gd php-cli php-bcmath postfix
+fi
+
+/admin/yumcron
+
+#
+# sync date
+#
+/admin/rdatecron
+ln -sf /usr/share/zoneinfo/America/New_York /etc/localtime
+
+#
+# tools
+#
+mkdir -p /tools
+/admin/vzopenvztc.sh > /tools/openvz_tc.sh
+chmod +x /tools/openvz_tc.sh
+
+if [ "$INT" = "1" ]; then
+#
+#rc.local
+#
+cat >> /etc/rc.d/rc.local <<EOF
+echo 50000 >  /proc/sys/net/ipv4/tcp_max_tw_buckets_ub
+echo 256000 > /proc/sys/net/ipv4/netfilter/ip_conntrack_max
+chmod +x /tools/openvz_tc.sh
+/admin/vzopenvztc.sh > /tools/openvz_tc.sh
+/tools/openvz_tc.sh
+setterm -blank 0
+for i in ipt_recent ipt_owner iptable_nat xt_connlimit tun ppp ppp_mppe ppp_async ipcomp esp4 xfrm4_tunnel af_key; do
+        modprobe \$i
+done
+
+if [ -e /proc/sys/dev/raid ]; then
+	echo 100000 > /proc/sys/dev/raid/speed_limit_min
+	echo 200000 > /proc/sys/dev/raid/speed_limit_max
+fi
+EOF
+
+
+# proc check
+ln -s /tools/proc_check.sh /etc/cron.hourly/proc_check.sh
+
+fi
+# end int from rc.local section
+
+
+#
+#sysctl
+#
+/bin/rm /etc/sysctl.conf
+cat >> /etc/sysctl.conf <<EOF
+# On Hardware Node we generally need
+# packet forwarding enabled and proxy arp disabled
+net.ipv4.ip_forward = 1
+net.ipv6.conf.default.forwarding = 1
+net.ipv6.conf.all.forwarding = 1
+net.ipv4.conf.default.proxy_arp = 0
+
+# Enables source route verification
+net.ipv4.conf.all.rp_filter = 1
+
+# Enables the magic-sysrq key
+kernel.sysrq = 1
+
+# We do not want all our interfaces to send redirects
+net.ipv4.conf.default.send_redirects = 1
+net.ipv4.conf.all.send_redirects = 0
+EOF
+
+#
+# edit default config
+#
+/admin/replace-linux NEIGHBOUR_DEVS=detect NEIGHBOUR_DEVS=all -- /etc/vz/vz.conf
+/admin/replace-linux VZFASTBOOT=no VZFASTBOOT=yes -- /etc/vz/vz.conf
+/admin/replace-linux IPTABLES= \#IPTABLES= -- /etc/vz/vz.conf
+echo IPTABLES=\"ipt_REJECT ipt_tos ipt_TOS ipt_LOG ip_conntrack ipt_limit ipt_multiport iptable_filter iptable_mangle ipt_TCPMSS ipt_tcpmss ipt_ttl ipt_length ipt_state iptable_nat ip_nat_ftp ip_tables ipt_multiport iptable_filter ipt_limit ipt_conntrack ip_conntrack_ftp ipt_state\" >> /etc/vz/vz.conf
+
+#
+# VPS Default Config
+#
+
+if [ -e /etc/vz/conf/ve-vps.basic.conf-sample ]; then
+	/bin/rm /etc/vz/conf/ve-vps.basic.conf-sample
+fi
+
+if [ -e /etc/vz/conf/ve-vps.basic.conf ]; then
+	/bin/rm /etc/vz/conf/ve-vps.basic.conf
+fi
+
+cat >> /etc/vz/conf/ve-vps.basic.conf <<EOF
+ONBOOT="yes"
+
+# UBC parameters (in form of barrier:limit)
+KMEMSIZE="24372700:24790164"
+LOCKEDPAGES="256:256"
+PRIVVMPAGES="512000:513000"
+SHMPAGES="21504:21504"
+NUMPROC="260:260"
+PHYSPAGES="0:2147483647"
+VMGUARPAGES="256000:2147483647"
+OOMGUARPAGES="256000:2147483647"
+NUMTCPSOCK="460:460"
+NUMFLOCK="188:206"
+NUMPTY="16:16"
+NUMSIGINFO="256:256"
+TCPSNDBUF="1720320:2703360"
+TCPRCVBUF="1720320:2703360"
+OTHERSOCKBUF="1126080:2097152"
+DGRAMRCVBUF="262144:262144"
+NUMOTHERSOCK="360:360"
+DCACHESIZE="3409920:3624960"
+NUMFILE="9312:9312"
+AVNUMPROC="180:180"
+NUMIPTENT="456:456"
+
+# Disk quota parameters (in form of softlimit:hardlimit)
+DISKSPACE="104857600:105906176"
+DISKINODES="5000000:5200000"
+QUOTATIME="0"
+
+# CPU fair sheduler parameter
+CPUUNITS="5000"
+CPULIMIT="90"
+CPUS="1"
+
+EOF
+
+ln -s /etc/vz/conf/ve-vps.basic.conf /etc/vz/conf/ve-vps.basic.conf-sample
+
+cat >> /etc/vz/conf/ve-vps.small.conf <<EOF
+ONBOOT="yes"
+
+# UBC parameters (in form of barrier:limit)
+KMEMSIZE="16372700:16790164"
+LOCKEDPAGES="256:256"
+PRIVVMPAGES="128000:131072"
+SHMPAGES="21504:21504"
+NUMPROC="200:200"
+PHYSPAGES="0:2147483647"
+VMGUARPAGES="65536:2147483647"
+OOMGUARPAGES="65536:2147483647"
+NUMTCPSOCK="360:360"
+NUMFLOCK="188:206"
+NUMPTY="16:16"
+NUMSIGINFO="256:256"
+TCPSNDBUF="1720320:2703360"
+TCPRCVBUF="1720320:2703360"
+OTHERSOCKBUF="1126080:2097152"
+DGRAMRCVBUF="262144:262144"
+NUMOTHERSOCK="360:360"
+DCACHESIZE="3409920:3624960"
+NUMFILE="9312:9312"
+AVNUMPROC="120:120"
+NUMIPTENT="456:456"
+
+# Disk quota parameters (in form of softlimit:hardlimit)
+DISKSPACE="25600000:26600000"
+DISKINODES="1000000:1200000"
+QUOTATIME="0"
+
+# CPU fair sheduler parameter
+CPUUNITS="3000"
+CPULIMIT="50"
+CPUS="1"
+EOF
+
+ln -s /etc/vz/conf/ve-vps.small.conf /etc/vz/conf/ve-vps.small.conf-sample
+
+#
+# templates
+#
+/admin/vzgettemplate.sh
+
+#
+# disable auditd according to wiki
+#
+/sbin/chkconfig --del auditd
+service auditd stop
+
+# start postfix
+/sbin/chkconfig postfix on
+/etc/init.d/postfix start
+/sbin/chkconfig --del saslauthd
+
+if [ "$INT" = "1" ]; then
+
+#
+# other stuff
+#
+/sbin/chkconfig mdmonitor on
+service mdmonitor start
+
+/admin/replace-linux root hardware@interserver.net -- /etc/mdadm.conf
+
+/admin/buildsmartconf
+
+ln -s /admin/vzconfbackup /etc/cron.daily/vzconfbackup
+cd /root/tmp
+if [ -f crontmp ]; then
+	/bin/rm crontmp
+fi
+crontab -l > crontmp
+echo "*/1 * * * * cd /root/cpaneldirect && ./vps_cron.sh" >> crontmp
+crontab crontmp
+/bin/rm crontmp
+
+
+#/admin/kspliceinstall
+/admin/installkernelcare
+fi
+#end int from other stuff
+
+if [ -e /usr/share/doc/centos-release-6 ]; then
+	echo 'Fixing potential boot issue';
+	FILE=`rpm -ql vzkernel | grep ^/boot/initramfs-`;
+	VERSION=2.6.32;
+	RELEASE=`rpm -qi vzkernel | grep Release | awk '{print $3}'`;
+	echo dracut -f --add-drivers raid1 --mdadmconf $FILE $VERSION-$RELEASE
+fi
+
+# don't rebuild sw raid weekly
+#cent5
+if [ -e /etc/cron.weekly/99-raid-check ]; then
+	mv /etc/cron.weekly/99-raid-check /etc/cron.monthly/
+fi
+#cent6
+if [ -e /etc/cron.d/raid-check ]; then
+	/admin/replace-linux "0 1 * * Sun" "0 0 1 * *" -- /etc/cron.d/raid-check
+fi
+
+yum -y remove libvirt-client
+yum -y remove rpcbind
+
+yum -y install ploop
+
+echo "Please sync /root/cpaneldirect"
+echo
+echo "You must now reboot"
+echo
+echo "Ensure SELinux and the firewall is off run system-config-securitylevel-tui"
+echo 
+echo "and remove the kernel (leaving vzkernel)"
+
+if [ "$INT" = "1" ]; then
+	echo -e "#!/bin/sh\n\nrsync -av rsync://vpsadmin.interserver.net/vps/cpaneldirect/ /root/cpaneldirect/\n" > /root/cpaneldirect/upscripts
+	chmod +x /root/cpaneldirect/upscripts
+
+	echo -e "#!/bin/sh\n\nrsync -av rsync://vpsadmin.interserver.net/vps/openvz/ /tools/\n" > /tools/upscripts
+	chmod +x /tools/upscripts
+
+	/tools/vztemplatecron
+
+fi
+
+yum -y remove avahi kernel
+
+/etc/init.d/crond restart
+
+rpm -Uvh http://mirror.trouble-free.net/3ware/MegaCli-8.07.14-1.noarch.rpm
+ln -s /opt/MegaRAID/MegaCli/MegaCli64 /usr/bin/megacli
+ln -s /opt/MegaRAID/MegaCli/MegaCli64 /usr/bin/MegaCli
+
+
+
+if [ "$INT" = "1" ]; then
+
+	echo 'Must run /tools/upscripts && /root/cpaneldirect/upscripts && /tools/vztemplatecron && /root/cpaneldirect/swift.sh and vztemplatecron and remove centos kernel' >> /etc/motd
+
+	cat /etc/motd
+fi
+

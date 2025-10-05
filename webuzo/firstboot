@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+
+if [ ! -d /usr/local/webuzo ]; then
+	echo '/usr/local/webuzo does not exist';
+	exit;
+fi
+
+if [ -f /etc/_firstboot ]; then
+	exit;
+fi
+
+# just some saftey checks
+# this is created on the template
+if [ ! -e /root/webuzo ]; then
+	exit;
+fi
+
+# this will exist
+if [ ! -f /root/install.sh ]; then
+	exit;
+fi
+
+if [ -d /usr/local/cpanel ]; then
+	echo '/usr/local/cpanel should not exist';
+	exit;
+fi
+
+if [ -d /usr/local/directadmin ]; then
+	echo '/usr/local/directadmin should not exist';
+	exit;
+fi
+
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/root/bin
+echo 'Running webuzo/firstboot';
+
+curip=`/usr/sbin/ip addr | grep inet | grep 64.20.46.222 | awk '{print $2}' | cut -d/ -f1`;
+if [ "$curip" = "64.20.46.222" ]; then
+	echo 'Staging system';
+	exit;
+fi
+
+touch /etc/_firstboot
+# https://webuzo.com/docs/installing-webuzo/creating-a-os-template/
+# we have done touch /var/webuzo/reconfigure
+# webuzo incorrectly binds 64.20.46.222 as a secondary ip
+# just a saftey check
+/bin/rm -v /root/webuzo
+
+if [ -x /admin/webuzo/upcp ]; then
+	echo 'Running /admin/webuzo/upcp';
+	/admin/webuzo/upcp
+fi
+
+if [ -x /usr/sbin/ifconfig ]; then
+	ifconfig eth0:0 down
+fi

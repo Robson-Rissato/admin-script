@@ -1,0 +1,6 @@
+
+You may want to run:
+install -m 644 /usr/local/doc/sysconfig.lighttpd /etc/sysconfig/lighttpd
+install -m 755 /usr/local/doc/rc.lighttpd.redhat /etc/init.d/lighttpd
+
+On redhat based systems

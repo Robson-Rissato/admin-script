@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+
+if [ "$1" = "" ]; then
+	echo 'Usage ./installcloudlinux install';
+	exit;
+fi
+
+if [ ! -e /usr/local/cpanel ]; then
+	echo 'Install cpanel first';
+	exit;
+fi
+
+if [ -e /usr/sbin/lvectl ]; then
+	echo 'Cloud Linux already installed';
+	exit;
+fi
+
+if [ ! -e /etc/redhat-release ]; then
+	echo 'Required CentOS/RHEL';
+	exit;
+fi
+
+if [ ! "$1" = "install" ]; then
+	echo "usage ./installcloudlinux install";
+	exit;
+fi
+
+if [ ! -f /etc/machine-id ]; then
+	echo 'Missing /etc/machine-id';
+	systemd-machine-id-setup
+fi
+
+echo 'kernel can not be excluded in /etc/yum.conf and plugins=1 must also be set';
+echo
+sleep 2s;
+echo
+echo 'Starting install';
+
+yum -y remove cpuspeed
+
+cd /root
+wget http://repo.cloudlinux.com/cloudlinux/sources/cln/cldeploy
+sh cldeploy -i
+
+
+# needed for quota (for now)
+#/admin/replace-linux "CloudLinux Server" CentOS -- /etc/redhat-release
+# end
+yum -y install lvemanager
+
+if [ -f /root/run ]; then
+	/bin/rm /root/run
+fi
+
+cat <<EOF>> /root/run
+#whmapi1 set_tweaksetting key=phploader value=ioncube
+#/admin/installcpanelclamav
+#wget -N http://files.softaculous.com/install.sh
+#chmod 755 install.sh
+#./install.sh
+clnreg_ks --force
+yum -y install cagefs
+cagefsctl --init
+cagefsctl --enable-all
+yum -y groupinstall alt-php
+yum -y update cagefs lvemanager
+/admin/scanner/create.sh cron
+yum -y install lvemanager
+yum -y install tcpdump iotop lftp
+#yum -y install governor-mysql
+#/usr/share/lve/dbgovernor/mysqlgovernor.py --install
+yum -y install lvemanager lve-utils
+#/admin/configs/cl_ruby_python_node_install
+EOF
+
+chmod +x /root/run
+
+echo
+echo 'Once back online run';
+echo
+echo '/root/run';

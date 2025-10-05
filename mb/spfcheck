@@ -1,0 +1,42 @@
+#!/usr/bin/env node
+
+const { execSync } = require('child_process');
+
+const spfCheck = require('/home/zone/zone-mta-template/node_modules/python-spfcheck2/index.js');
+
+// Get arguments directly
+const args = process.argv.slice(2);
+
+if (args.length < 3) {
+  console.error('Usage: spfcheck.js <ip> <address> <host>');
+  process.exit(1);
+}
+
+const [ip, address, host] = args;
+
+const cacheKey = `${ip}:${address}:${host}`;
+
+// Delete the key using redis-cli
+try {
+  const delOutput = execSync(`redis-cli -p 6381 DEL "${cacheKey}"`).toString().trim();
+  if (delOutput === '1') {
+    console.log(`Deleted key: ${cacheKey}`);
+  } else {
+    console.log(`Key did not exist: ${cacheKey}`);
+  }
+} catch (err) {
+  console.error('Error deleting key:', err.message);
+  // Optional: exit here if delete is critical
+  // process.exit(1);
+}
+
+spfCheck(ip, address, host)
+  .then((result) => {
+    console.log('SPF Check Result:', result);
+    process.exit(0);
+  })
+  .catch((err) => {
+    console.error('Error:', err.message);
+    process.exit(1);
+  });
+

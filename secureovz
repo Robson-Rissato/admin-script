@@ -1,0 +1,17 @@
+#!/bin/sh
+
+if [ ! -e /proc/user_beancounters ]; then
+	exit;
+fi
+
+mount -o remount -o rw,noexec,nosuid,nodev /sys
+mount -o remount -o rw,noexec,nosuid,nodev /proc
+mount -o remount -o rw,noexec,nosuid /dev/shm
+mount -t tmpfs -o noexec,nosuid tmpfs /tmp
+if [ -d /var/tmp ]; then
+	cd /var
+	rm -rf tmp
+	ln -s /tmp /var/tmp
+fi
+/admin/mysqlsymlink
+/admin/acl

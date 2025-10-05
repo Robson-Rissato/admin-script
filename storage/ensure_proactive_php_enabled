@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+
+# ensure that proactive defense modules in php is enabled
+# and fixes memory limit
+
+if [ ! -d /usr/local/directadmin ]; then
+        echo 'Requires directadmin';
+        exit;
+fi
+
+if [ ! -e /opt/imunify360/lib/proactive.sock ]; then
+        echo 'Proactive defense must be enabled in php';
+        exit;
+fi
+
+change=0;
+
+cd /usr/local
+for php in `ls | grep ^php`; do
+        if [ -x /usr/local/$php/bin/php ]; then
+                echo "Working on $php";
+		# memory limit
+		if [ -f /usr/local/$php/lib/php.ini ]; then
+			/admin/replace-linux "memory_limit = 128M" "memory_limit = 256M" -- /usr/local/$php/lib/php.ini && echo "Updated memory limit";
+		fi
+
+                check=`/usr/local/$php/bin/php -i | grep -i proactive.sock$`;
+                if [ "$check" = "" ]; then
+                        echo 'Proactive defense is not enabled in php';
+                        if [ -d /opt/alt/$php ]; then
+			
+                                if [ -f /opt/alt/$php/usr/lib/x86_64-linux-gnu/php/modules/i360.so ]; then
+                                        echo "Copying over i360";
+                                        extension_dir=`/usr/local/$php/bin/php -i | grep -i ^extension_dir | awk '{print $3}' | grep ^/usr/local/$php`;
+                                        if [ "$extension_dir" = "" ]; then
+                                                echo 'Can not determine extension dir';
+                                        else
+                                                cp /opt/alt/$php/usr/lib/x86_64-linux-gnu/php/modules/i360.so $extension_dir
+                                                if [ -f /opt/alt/$php/etc/php.d.all/i360.ini ]; then
+                                                        cp /opt/alt/$php/etc/php.d.all/i360.ini /usr/local/$php/lib/php.conf.d
+                                                fi
+						change=1;
+                                        fi
+                                fi
+                        else
+                                echo -n 'Hardened php appears to be missing for version ';
+                                echo $php;
+                        fi
+                else
+                        echo 'Proactive defense is enabled in php';
+                fi
+        else
+                echo "$php version does not have an executable binary";
+        fi
+done
+
+if [ "$change" = "1" ]; then
+	/admin/res httpd
+fi

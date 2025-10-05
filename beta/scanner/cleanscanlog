@@ -1,0 +1,60 @@
+#!/bin/bash
+
+if [ ! -d /usr/local/cpanel ]; then
+	exit;
+fi
+
+if [ ! -x /usr/bin/timeout ]; then
+	exit;
+fi
+
+datalock=/root/tmp/_tmpscanlog;
+lastrun=/root/tmp/_tmpscanloglast;
+thisrun=/root/tmp/_tmpscanlogthis;
+date=$(date);
+
+if [ -f $datalock ]; then
+        /bin/rm -v $datalock
+fi
+
+if [ -f $thisrun ]; then
+        mv -f $thisrun $lastrun
+else
+        touch $lastrun
+fi
+
+touch $datalock
+
+mydate=`date "+%a %b"`;
+
+for users in $(tail -n 1000 /admin/scanner/log.txt | egrep -v "^EMAIL_FINDSPAMMER|REPLACED" | grep "$mydate" | cut -d/ -f3 | sort | uniq); do
+        if [ -d /var/cpanel/userdata/$users ]; then
+                dirs=$(grep ^documentroot: /var/cpanel/userdata/$users/* | awk '{print $2}' | sort | uniq | grep $users | grep ^/home);
+                for dir in $dirs; do
+			echo "Found $dir";
+			sleep 2s;
+			check=$(grep ^${dir}$ $lastrun);
+			if [ "$check" = "${dir}" ]; then
+				echo "Skipping ${dir} do to previous run";
+				# skip again
+				echo ${dir} >> $thisrun
+			fi
+                        if [ -d $dir ]; then
+                                echo "found $dir";
+				sleep 2s;
+				cd $dir
+				if [ "$(pwd)" = "$dir" ]; then
+					# skip
+                                	echo ${dir} >> $thisrun
+					timeout 10m /admin/clamscan justdb q
+				else
+					echo 'Error: our pwd cures not patch the dir above';
+				fi
+                        else
+                                echo "$dir is not a dir";
+                        fi
+                done
+        else
+                echo "$users does not exist";
+        fi
+done

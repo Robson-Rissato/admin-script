@@ -1,0 +1,111 @@
+#!/usr/bin/env bash
+
+# last modified 02/17/2025
+# this script is a catch all for minio /admin/minio commands
+# they all symlink to /admin/minio/minio - following the busybox model
+
+MINNAME=myminio;
+HOSTNAME=`hostname`;
+
+# basic sanity check
+if [ ! -f /etc/debian_version ] ; then
+	echo 'Tested on debian/ubuntu only';
+	exit;
+fi
+
+# need apt for auto install
+if [ ! -x /usr/bin/apt ]; then
+	echo '/usr/bin/apt is missing or broken';
+	exit;
+fi
+
+# this is where we install the cli
+if [ ! -x /usr/local/bin/mc ]; then
+        echo 'Missing /usr/local/bin/mc';
+        exit;
+fi
+
+# basic sanity check on systems
+if [ ! -f /etc/default/minio ]; then
+        echo 'Missing /etc/default/minio';
+        exit;
+fi
+
+# wget needed for update
+if [ ! -x /usr/bin/wget ]; then
+        echo 'Missing /usr/bin/wget';
+	apt -y install wget
+fi
+
+# lsof needed for status check
+if [ ! -x /usr/bin/lsof ]; then
+        echo 'Missing /usr/bin/lsof';
+	apt -y install lsof
+fi
+
+# jq Hi John needed for offline check
+if [ ! -x /usr/bin/jq ]; then
+	echo 'Missing /usr/bin/jq';
+	apt -y install jq
+fi
+
+# used to get incoming commands
+script=`basename $0`
+
+#colors
+if [ "$COLORS" = "" ]; then
+        blue=$(tput setaf 4)
+        green=$(tput setaf 2)
+        cyan=$(tput setaf 6)
+        normal=$(tput sgr0)
+fi
+
+if [ "$script" = "minio" ]; then
+        if [ ! "$1" = "" ]; then
+                script=$1;
+                shift;
+        fi
+fi
+
+case "$script" in
+ c)
+  echo 'Commands are:';
+  find /admin/minio -maxdepth 2  -type l | cut -d/ -f4
+;;
+ du)
+  mc du myminio
+ ;;
+ ping)
+  mc ping --count 10 myminio
+ ;;
+ status)
+  mc admin info ${MINNAME}
+  echo
+  lsof -i :9001
+  echo
+  if [ -x /admin/configs/check_if_ssl_is_valid ]; then
+	/admin/configs/check_if_ssl_is_valid $HOSTNAME 9000
+  fi
+;;
+ offlinecheck)
+  mc admin info ${MINNAME} --json | jq '.info.backend | select(.offlineDisks > 0)'
+ ;;
+ listkeys)
+  mc admin accesskey list --all ${MINNAME}
+ ;;
+ update)
+ if [ -d /usr/local/bin ]; then
+  echo 'You need to update at least two systems at a time - best to do all 4 sleeping 5s';
+  sleep 5;
+  cd /usr/local/bin
+  wget -N https://dl.min.io/client/mc/release/linux-amd64/mc && chmod +x minio; chown admin:admin mc
+  systemctl stop minio; wget -N https://dl.min.io/server/minio/release/linux-amd64/minio && chmod +x minio; chown admin:admin minio; systemctl start minio
+ else
+  echo 'Missing /usr/local/bin';
+ fi
+;;
+  *)
+        echo 'Unknown call run /admin/minion/c to see all commands';
+  ;;
+ esac
+

@@ -1,0 +1,823 @@
+#!/usr/bin/env bash
+
+export HOME=/root
+export PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin:/root/bin
+
+# John Quaglieri
+# john@interserver.net
+# 02.27.2021
+# touch /standalone for non int vps's and zfs
+
+# need to further test openvz7 like simfs, add lxd support 
+# home_location is now used in vz7 need a regex
+
+################################################
+#
+#  examples
+#
+# ./vpsbackup 117650 email john@interserver.net 
+# ./vpsbackup vpsid partclone email@address
+# ./vpsbackup all - everything
+# ./vpsbackup 117650 load - lower load
+# ./vpsbackup monthly - everyone over 1 slice
+# ./vpsbackup 117650 fast - set fast variable on for faster backups with out md5sum checks
+#
+################################################
+
+# todo ubuntu18 mail is different previous smtp does not work
+# adding in kvmv2
+
+# our dir in /admin/swift - but this allows the dir to change
+running_dir=$(dirname $0);
+
+# prevent collisions from running backups twice the same day
+random_ext=$RANDOM;
+
+# basic sanity check
+if [ ! -f ${running_dir}/swift.include ]; then
+	echo 'Missing swift.include';
+	exit;
+fi
+
+
+. ${running_dir}/swift.include
+
+# email functions
+# need to work on ubuntu18
+if [ -f /root/cpaneldirect/swift.email ]; then
+	. /root/cpaneldirect/swift.email
+fi
+
+# date format is used in the backup name
+date=`date +%Y-%m-%d`
+
+# a switch when running by cron
+export RUN_BY_CRON=1;
+
+# switch to change if we are zfs
+ZFS=0;
+
+# our log file for tee
+if [ "$1" = "" ]; then
+	LOGFILE=/root/tmp/none-$$-backup-$date.log
+else
+	LOGFILE=/root/tmp/${1}-$$-backup-$date.log
+fi
+
+if [ ! -e /usr/bin/python2 ]; then
+	if [ -f /etc/debian_release ]; then
+		apt -y install python2
+	fi
+fi
+
+# functions
+# basic regex to determine if there is a valid email and pass it to backup script
+
+function end_backup_date() {
+		enddate=`date`;
+                echo
+                echo -n 'Finished backup of all at ';
+                echo $enddate;
+		echo
+
+}
+
+function check_for_email() {
+		tempemail=$1;
+		echo "checking email $tempemail";
+                # email supported on both partclone and backup now, so we call ./vpsbackup vpsid partclone|email email address
+                # can pass email as option 3 we regex it to ensure its valid
+                if [ "$tempemail" = "" ]; then
+			echo 'No email set';
+                        email='';
+                else
+                        if [[ "$tempemail" =~ ^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,4}$ ]]; then
+                                email=$tempemail;
+				echo "Sending email to $email";
+                        else
+                                email='';
+                                echo "Email is not valid no email will be sent";
+                        fi
+                fi
+
+}
+
+# need to work on ubuntu 18
+send_email() {
+	HOSTNAME=`hostname`;
+	if [ -f $LOGFILE ]; then
+		egrep -v "^<|^>|^\*|X-Auth-Token|AUTH_" $LOGFILE > $LOGFILE.tmp
+		if [ -f $LOGFILE.tmp ]; then
+			${MAILX_PATH} -s "InterServer Backup ${1} filename $BACKUP_NAME on ${HOSTNAME}" -S smtp=${smtpserver} -S smtp-auth=login -S smtp-auth-user=${smtplogin} -S smtp-auth-password=${smtppassword} -S from="${smtpfrom}" -S ssl-verify=ignore -S nss-config-dir=/etc/pki/nssdb $email < $LOGFILE.tmp
+			/bin/rm -v $LOGFILE.tmp
+		fi
+	fi
+}
+
+# clean up functions zfs kvm and openvz
+# we trap to remove the lvm /snapshot / ploop snapshot incase we exit (ctrl +c)
+function cleanupzfs()
+{
+        if [ "$VPS" = "" ]; then
+                echo "Clean up has no VPS id" 2>&1 | tee -a $LOGFILE
+                exit;
+        fi
+
+        if [ "$myuuID" = "" ]; then
+                echo "Clean up has no $myuuID" 2>&1 | tee -a $LOGFILE
+                exit;
+        fi
+	zfs list -t snapshot
+	sleep 1s;
+	zfs destroy ${DATASET}@${myuuID}
+	zfs list -t snapshot
+	end_backup_date
+}
+# clean up kvm
+function cleanupkvm()
+{
+
+        if [ "$VPS" = "" ]; then
+                echo "Clean up has no VPS id" 2>&1 | tee -a $LOGFILE
+        	exit;
+        fi
+
+        if [ "$myuuID" = "" ]; then
+                echo "Clean up has no $myuuID" 2>&1 | tee -a $LOGFILE
+        	exit;
+        fi
+
+        if [ ! "$noswift" = "1" ]; then
+                echo "Deleting after $REALDELETEAFTER days by sending deleteafter $CONTAINER $NAME $REALDELETEAFTER" 2>&1 | tee -a $LOGFILE
+                sleep 10s;
+        	$my_path/deleteafter $CONTAINER $NAME $REALDELETEAFTER 2>&1 | tee -a $LOGFILE
+        fi
+
+        echo y | lvremove ${VZPATH}/$myuuID 2>&1 | tee -a $LOGFILE
+        echo 'Settling for 5 seconds';
+	sleep 5s;
+}
+
+# virtuozzo7
+function cleanupvz7() {
+                        if [ "${VZ7vpsid}" = "" ]; then
+                                echo "Clean up has no CTID" 2>&1 | tee -a $LOGFILE
+                                exit;
+                        fi
+
+                        mysnap=`prlctl snapshot-list ${VZ7vpsid} --tree | cut -d{ -f2 | cut -d} -f1`;
+                        if [ "$mysnap" = "" ]; then
+                                echo 'Got back a blank snapshot, not deleting';
+                        else
+                                prlctl snapshot-delete ${VZ7vpsid} --id $mysnap 2>&1 | tee -a $LOGFILE
+                                echo "Deleting after $REALDELETEAFTER days sending deleteafter vps${CTID} ${CTID}-backup-$date $REALDELETEAFTER" 2>&1 | tee -a $LOGFILE
+                                sleep 10s;
+                                $my_path/deleteafter vps${CTID} $BACKUP_NAME $REALDELETEAFTER 2>&1 | tee -a $LOGFILE
+                                echo 'Settling for 15 seconds';
+                                sleep 15s;
+                fi
+}
+
+# openvz
+function cleanupvz() {
+                        if [ "$CTID" = "" ]; then
+                                echo "Clean up has no CTID" 2>&1 | tee -a $LOGFILE
+                                exit;
+                        fi
+
+                        if [ "$myuuID" = "" ]; then
+                                echo "Clean up has no $myuuID" 2>&1 | tee -a $LOGFILE
+                                exit;
+                        fi
+
+                        vzctl snapshot-delete $CTID --id $myuuID 2>&1 | tee -a $LOGFILE
+                        echo "Deleting after $REALDELETEAFTER days sending deleteafter vps${CTID} ${CTID}-backup-$date $REALDELETEAFTER" 2>&1 | tee -a $LOGFILE
+                        sleep 5s;
+                        $my_path/deleteafter vps${CTID} $BACKUP_NAME $REALDELETEAFTER 2>&1 | tee -a $LOGFILE
+                        echo 'Settling for 5 seconds';
+                        sleep 5s;
+
+}
+
+# end functions
+
+# begin script
+
+# added /standalone for radix who uses solusvm
+if [ ! -f /standalone ]; then
+	if [ ! -d /root/cpaneldirect -a ! -d /usr/local/solusvm ]; then
+		echo "No cpaneldirect folder or solusvm or standalone" 
+		exit;
+	fi
+fi
+
+storage_check=`hostname -s | grep ^storage`;
+if [ ! "$storage_check" = "" ]; then
+	if [ -z "$PS1" ]; then
+		echo 'Storage system detected';
+		if [ ! -f /root/.mc/config.json ]; then
+			echo 'Due to the size of storage systems do not run this before a slice upgrade';
+			echo
+			echo 'So we are exiting in 10 seconds unless yes is typed';
+			echo
+			read -t 10 wait
+			if [ ! "$wait" = "yes" ]; then
+				echo 'Exiting';
+				exit 0;
+			fi 
+		else
+			if [ ! "$1" = "all" ]; then
+				if [ -d /vz/vps${1} ]; then
+					space=`df -BG | grep /vz/vps${1} | awk '{print $3}' | cut -dG -f1`;
+					if [ "$space" -gt "1000" ]; then
+						echo -n "vps${1} is using more than 1TB must start by typing yes ";
+			                        read -t 10 wait
+	                        		if [ ! "$wait" = "yes" ]; then
+        	        	                	echo 'Exiting';
+                		                	exit 0;
+		                        	fi
+					fi
+				else
+					echo "/vz/vps${1} does not exist";
+					exit 0;
+				fi
+			fi
+		fi
+	fi
+fi
+
+checkload=`awk '{print $1}' /proc/loadavg | cut -d. -f1`;
+
+if [ -e /proc/user_beancounters ]; then
+	maxload=75;
+else
+	maxload=50;
+fi
+
+if [ "$checkload" -gt "$maxload" ]; then
+	if [ -z "$PS1" ]; then
+		echo 'Load is over 50 existing unless yes it typed';
+		echo
+		read -t 10 wait
+                if [ ! "$wait" = "yes" ]; then
+                        echo 'Exiting';
+                        exit 0;
+                fi
+	else
+		echo 'Skipped backup due to load';
+	fi
+fi
+
+
+# check for multiple processes
+pscheck=`ps auxw | grep "[v]psbackup" | wc -l`;
+if [ "$pscheck" -gt 2 ]; then
+	# note that the bash process will be one pid, and the script itself a second so 2 will be the minumum returned
+	if [ -z "$PS1" ]; then
+		echo 'Another backup process is running - script this is an interactive shell we are sleeping 10 seconds and will start';
+		echo "$pscheck";
+		sleep 10
+	else
+		echo 'Another backup process detected we will be sleeping for 3600 seconds';
+		sleep 3600
+	fi
+fi
+
+# by default we delete after 60 days
+# this is sent to the swift server using the object expire functin
+if [ "$DELETEAFTER" = "" ]; then
+	REALDELETEAFTER=60;
+else
+	# ensure we are numeric
+	if [[ $DELETEAFTER =~ ^-?[0-9]+$ ]]; then
+		REALDELETEAFTER=$DELETEAFTER;	
+	else
+		REALDELETEAFTER=60;
+	fi
+fi
+
+# verbose message
+echo "Using delete after $REALDELETEAFTER";
+
+# usage when just called
+if [ "$1" = "" ]; then
+	echo 'Usage ./vpsbackup ID OPTIONAL|all|noswift|monthly|load|partclone';
+	exit;
+# run a loop for all vps's
+elif [ "$1" = "all" ]; then
+	if [ -f /standalone -o -f /sbin/zfs ]; then
+		# this only backs up running vms
+		# if calling ./vpsbackup all noswift we do not store to swift openstack
+                if [ "$2" = "noswift" ]; then
+                        for ID in `virsh list --name --state-running`; do nice -n 19 ionice -c3 $my_path/vpsbackup $ID noswift; sleep 1m; done
+                else
+			echo "Setting Fast RUN"
+			export SET_FAST=1;
+			# normal run of all calls
+                        for ID in `virsh list --name --state-running`; do nice -n 19 ionice -c3 $my_path/vpsbackup $ID; sleep 1m; done
+                fi
+		end_backup_date;
+                exit;
+	# kvmv1 uses files in root to determine the type
+	elif [ -f /win ]; then
+		for ID in `virsh list --name --state-running | cut -c8-`; do nice -n 19 ionice -c3 $my_path/vpsbackup $ID; sleep 1m; done
+		end_backup_date
+		exit;
+	elif [ -f /lin ]; then
+		for ID in `virsh list --name --state-running | cut -c6-`; do nice -n 19 ionice -c3 $my_path/vpsbackup $ID; sleep 1m; done
+		end_backup_date
+		exit;
+	elif [ -x /usr/bin/prlctl ]; then
+		echo 'VZ7 all';
+		for ID in `prlctl list -o name --no-header | tr -d "vps"`; do nice -n 19 ionice -c3 $my_path/vpsbackup $ID; sleep 1m; done
+		end_backup_date
+		exit;
+	elif [ -x /usr/sbin/vzlist ]; then
+		for ID in `vzlist -o ctid -H`; do nice -n 19 ionice -c3 $my_path/vpsbackup $ID; sleep 1m; done
+		end_backup_date
+		exit;
+	else
+		echo "Did not find vps type in all backup at line $LINENO";
+		exit;
+	fi
+# currently not really used. Was available to backup monthly and skip 1 slice vps's
+elif [ "$1" = "monthly" ]; then
+# monthly skip 1 slice vps
+
+	# this file shows the vps ids and slice mounts
+	if [ -f /root/cpaneldirect/vps.slicemap ]; then
+		for ID in `cat /root/cpaneldirect/vps.slicemap | grep -v :1$ | grep : | cut -d: -f1`; do nice -n 19 ionice -c3 $my_path/vpsbackup $ID load; sleep $(( RANDOM % (600 - 5 + 1 ) + 5 )); done
+		exit;
+	else
+		echo 'Error: did not find /root/cpaneldirect/vps.slicemap';
+		exit;
+	fi
+else
+	ID=$1;
+fi
+
+# this is to reduce load
+if [ "$2" = "load" ]; then
+	echo 'Calling with load check';
+
+	loadcheck=`cat /proc/loadavg  | awk '{print $1}' | cut -d. -f1`;
+	if [ "$loadcheck" -gt "10" ]; then
+		echo 'Load over 10 sleeping for 1000s';
+		sleep 1000s;
+	fi
+fi
+
+if [ "$2" = "fast" ]; then
+	echo 'setting SET_FAST';
+	export SET_FAST=1;
+fi
+
+# we default to /backup in no swift
+# this is not used much
+if [ "$2" = "noswift" ]; then
+	echo 'Using call with no swift - only designed for KVM';
+	sleep 2s;
+	noswift=1;
+	if [ ! -d /backup ]; then
+		echo '/backup does not exist';
+		exit;
+	fi
+fi
+
+
+# log file
+echo | tee -a $LOGFILE
+echo "	Starting run at $date" | tee -a $LOGFILE
+
+# virsh exists we are kvm, as long as prctl doesn't exist making it openvz7
+if [ -e /usr/bin/virsh -a ! -e /usr/bin/prlctl ]; then
+	echo 'KVM' 2>&1 | tee -a $LOGFILE
+	# kvmv1 types
+	# we will need changes for kvmv2
+	if [ -f /standalone -o -f /sbin/zfs ]; then
+		TYPE='';
+	elif [ -f /win ]; then
+		TYPE=windows;
+	elif [ -f /cloud ]; then
+		TYPE=qs;
+	else
+		TYPE=linux;
+	fi
+
+        #SOLUSVM backup
+        if [ -d /usr/local/solusvm ]; then
+		TYPE='';
+ 	       	echo 'Found SolusVM';
+               	SOLUSVM=`vgdisplay  | grep "VG Name" | awk '{print $3}' | head -n 1`;
+               	echo "VG name is $SOLUSVM";
+               	if [ "$SOLUSVM" = "" ]; then
+        	       echo "VG path is blank at $LINENO";
+                       exit;
+               	fi
+
+		VZPATH="/dev/${SOLUSVM}";
+                if [ -d /dev/${SOLUSVM} ]; then
+                	echo "Using /dev/${SOLUSVM}";
+                else
+                	echo "/dev/${SOLUSVM} is not a directory";
+                        exit;
+                fi
+
+		VPS=`echo ${ID} | cut -d_ -f1`
+		VMID=${ID};
+	# kvmv2
+	elif [ -e /sbin/zfs ]; then
+		echo 'KVMv2 with zfs';
+		ZFS=1;
+		if [ ! -e /usr/bin/zstd ]; then
+			if [ -e /etc/debian_version ]; then
+				echo 'installing zstd';
+				apt -y install zstd
+			fi
+		fi
+		# type is windows or linux, on standalone we pass the type and type is blank
+		if [ -d /vz/windows${ID} ]; then
+			TYPE=windows;
+		elif [ -d /vz/linux${ID} ]; then
+			TYPE=linux;
+		elif [ -d /vz/qs${ID} ]; then
+			TYPE=qs;
+		elif [ -d /vz/vps${ID} ]; then
+                        TYPE=vps;
+		elif [ -d /vz/${ID} ]; then
+			TYPE='';
+		else
+			echo 'Can not find vps type';
+			exit;
+		fi
+		VPS="${TYPE}${ID}"
+		VMID=$VPS;
+        else
+		# here we are kvmv1 not zfs but /standalone
+		VZPATH=/dev/vz;
+		if [ -f /standalone ]; then
+			if [ -L ${VZPATH}/windows${ID} ]; then
+				TYPE=windows;
+			elif [ -L ${VZPATH}/linux${ID} ]; then
+				TYPE=linux;
+			elif [ -L ${VZPATH}/${ID} ]; then
+				TYPE='';
+			else
+				echo 'KVMV1 can not find type';
+				exit;
+			fi
+		fi
+
+		VPS="${TYPE}${ID}"
+		VMID=$VPS;
+        fi
+
+        # the vps should be defined
+        check=`virsh list --all | grep $VPS | awk '{print $2}'`;
+        if [ ! "$check" = "$VPS" ]; then
+                echo "virsh did not find this vps $VPS" 2>&1 | tee -a $LOGFILE
+                exit;
+        fi
+
+	# for zfs only
+	# on zfs we lookup the location of the qcow file we do not use lvm and will make a snapshot
+        # using this method we are more free in the future to have different device locations
+	if [ $ZFS = "1" ]; then
+		# using the format of either os.qcow2 or vpsname.raw - os.qcow2 is from auto kvm set up, vps.raw is my personal set up
+        	DEVICE=$(virsh domblklist ${VPS} --details | awk '{print $4}' | egrep "/os.qcow2|/${VPS}.raw|/os.raw" | tail -n 1)
+
+		# don't allow blank device
+		if [ "$DEVICE" = "" ]; then
+			echo 'Got back blank device';
+			exit;
+		fi
+
+        	if [ ! -f ${DEVICE} ]; then
+ 	        	echo "${DEVICE} does not exist can not continue further";
+        		exit;
+        	fi
+		DATASET=$(echo $DEVICE | cut -d/ -f2-3);
+		if [ "$DATASET" = "" ]; then
+                        echo 'Got back blank dataset';
+                        exit;
+                fi
+
+		if [ ! "$(zfs list ${DATASET} -o name -H)" = "${DATASET}" ]; then
+			echo 'Could not verify data set';
+			exit;
+		else
+			echo -n 'Found dataset ';
+			echo $DATASET;
+		fi
+                echo -n 'Found device ';
+                echo $DEVICE;
+	fi
+
+	# the container is the the format of vpsID on swift cluster
+	# however for zfs we have already determined the name
+	if [ "$ZFS" = "1" ]; then
+		CONTAINER="${VMID}";
+	elif [ -f /cloud ]; then
+		CONTAINER="qs${ID}"
+	else 
+		CONTAINER="vps${ID}"
+	fi
+	# add random_ext for users who run backups twice in the same day
+	if [ -x /usr/bin/zstd ]; then
+		NAME="${TYPE}${ID}-${date}-${random_ext}.zst"	
+	else
+		NAME="${TYPE}${ID}-${date}-${random_ext}.gz"
+	fi
+
+	# this is just debugging info when running backups
+	echo "Found: $VPS $CONTAINER $NAME on $date ZFS $ZFS" 2>&1 | tee -a $LOGFILE
+	sleep 1s;
+
+	if [ ! -f /root/.mc/config.json ]; then
+		echo 'WARNING MINIO NOT IN USE DO NOT USE THIS AS A SAFTEY BACKUP WITH OUT SNAPSHOTS OR ASK THE NODE BE CONVERTED TO MINIO';
+		sleep 5;
+		echo 'Continuing backup NOTE THE WARNING ABOVE';
+		sleep 1;
+	fi
+
+	echo "making container $CONTAINER" 2>&1 | tee -a $LOGFILE
+	$my_path/ismkdir $CONTAINER 2>&1 | tee -a $LOGFILE
+	sleep 1s;
+
+	# check that we are a symlink with an LVM device will be
+	# zfs will not use this
+	if [ $ZFS = "0" -a ! -L ${VZPATH}/${VMID} ]; then
+ 		echo "${VZPATH}/$VMID not a symlink" 2>&1 | tee -a $LOGFILE
+
+		# kvm265 fix
+		# has both linux and windows on kvm265 and this is the direction we are going in
+		if [ -f /standalone ]; then
+			echo 'Searching for other locations';
+			TYPE=windows;
+	             	VPS="${TYPE}${ID}"
+                        VMID=$VPS;
+			# windows check
+			if [ ! -L ${VZPATH}/${VMID} ]; then
+				echo 'Trying again';
+				TYPE=linux;
+                        	VPS="${TYPE}${ID}"
+                       		VMID=$VPS;
+				# linux check
+				if [ ! -L ${VZPATH}/${VMID} ]; then
+					echo 'Could not find any LVM';
+					exit;
+				else
+					echo "Found ${VZPATH}/${VMID}";
+				fi
+			else
+				echo "Found ${VZPATH}/${VMID}";
+			fi
+		else
+			exit;
+		fi
+	fi
+	# end kvm265 fix
+
+	#myuuID=$(uuidgen)
+	# kpartx doesn't handle uuid well - i don't recall why
+	myuuID=$(openssl rand -hex 32);
+	if [[ "$myuuID" =~ ^[a-zA-Z0-9]{32}$ ]]; then 
+ 		echo "Error: did not get a uuid for snapshot" 2>&1 | tee -a $LOGFILE
+ 		exit;
+	fi
+
+	# create zfs snapshot lets confirm this exists in swift code
+        if [ "$ZFS" = "1" ]; then
+		echo 'Creating zfs snapshot';
+		zfs snapshot ${DATASET}@${myuuID}
+        fi
+
+	# we are in the if virsh exists block
+	if [ "$ZFS" = "0" ]; then
+		echo "creating $VPS snapshot called $myuuID" 2>&1 | tee -a $LOGFILE
+
+		trap "{ cleanupkvm; exit; }" EXIT
+
+		# we should add a time out here for possible lvm issues
+		if [ "$(lvdisplay  |grep 'Allocated pool')" = "" ]; then
+			#thin="no"
+			lvcreate -L2048M -s -n $myuuID ${VZPATH}/$VMID  2>&1 | tee -a $LOGFILE
+ 		else
+			#thin="yes"
+			echo 'Using LVM Thin' 2>&1 | tee -a $LOGFILE
+			lvcreate -kn -s --thinpool thin ${VZPATH}/$VMID --name $myuuID 2>&1 | tee -a $LOGFILE
+ 		fi
+
+		if [ ! "$noswift" = "1" ]; then
+
+			# function to email output of a backup in kvm we pass to /admin/swift
+			if [ ! "$3" = "" ]; then
+				check_for_email $3
+			fi
+
+			if [ "$2" = "partclone" ]; then
+
+				if [ ! -x ${partclone_path}.info ]; then
+					if [ -e /etc/redhat-release ]; then
+						yum -y install partclone
+					elif [ -e /etc/debian_version ]; then
+						apt-get -y install partclone
+					else
+						echo 'Partclone must be installed';
+					fi
+				fi
+
+				$my_path/ddlvm $myuuID $CONTAINER $NAME partclone $email 2>&1 | tee -a $LOGFILE
+			else
+				echo "Non partclone";
+				$my_path/ddlvm $myuuID $CONTAINER $NAME 2>&1 | tee -a $LOGFILE
+			        if [ "$email" = '' ]; then
+			                echo 'Not sending email';
+        			else
+                			send_email
+        			fi
+			fi
+		else
+			echo 'Non swift DD' | tee -a $LOGFILE
+			dd bs=4096 conv=noerror if=${VZPATH}/$myuuID  | gzip -1c > /backup/$NAME.gz | tee -a $LOGFILE
+		fi
+
+		end_backup_date
+
+		#cleanupkvm;
+		trap - TERM
+	elif [ $ZFS = "1" ]; then
+		if [ ! "$noswift" = "1" ]; then
+                        # function to email output of a backup in kvm we pass to /admin/swift
+                        if [ ! "$3" = "" ]; then
+                                check_for_email $3
+                        fi
+
+			trap "{ cleanupzfs; exit; }" EXIT
+				$my_path/ddzfs ${DATASET}@${myuuID} $CONTAINER $NAME x $email 2>&1 | tee -a $LOGFILE
+				if [ ! "$REALDELETEAFTER" = "" ]; then
+					$my_path/deleteafter $CONTAINER $NAME $REALDELETEAFTER
+				fi 
+			trap - TERM
+		else
+			echo 'No support for noswift on zfs yet';
+		fi
+	else
+		echo 'ERROR: Returned non zero or 1 for ZFS';
+		exit;
+	fi
+
+# this is for openvz7/virtuozzo7
+# we need a simfs backup
+elif [ -f /usr/bin/prlctl ]; then
+	echo 'Openvz 7' 2>&1 | tee -a $LOGFILE
+        CTID=${ID};
+	# set a variable default we are using prlctl not vzctl
+	# snapshots are not supported using vzctl right now
+	vzctl=0;
+	check=$(prlctl list --all | egrep "CT vps${CTID}$|CT ${CTID}$" |rev | cut -d" " -f1 | rev);
+	if [ "$check" = "" ]; then
+		#prlctl list --all
+		#echo
+		echo "No running vps in prlctl for ID ${CTID} checking vzctl" 2>&1 | tee -a $LOGFILE
+		check=$(vzlist -H -o ctid ${CTID} | awk '{print $1}');
+		if [ "$check" = "" ]; then
+			echo "No running vps in vzctl for ID ${CTID} checking" 2>&1 | tee -a $LOGFILE
+			exit;
+		else
+			vzctl=1;
+			echo "Found running vps for id ${CTID} in vzctl" 2>&1 | tee -a $LOGFILE
+		fi
+	fi
+	
+	if [ ! "$vzctl" = "1" ]; then
+		# vz7 ct is not consistent
+		VZ7vpsid=$check;
+		MYUUID=`prlctl list -o uuid --no-header ${VZ7vpsid} | cut -d{ -f2 | cut -d} -f1`;
+	else
+		echo "Using $CTID as UUID due to vzctl being used over prlctl" 2>&1 | tee -a $LOGFILE
+		MYUUID=$check;
+		VZ7vpsid=$check;
+	fi
+
+	if [ "$MYUUID" = "" ]; then
+		echo -n 'Error MYUUID is blank at ';
+		echo $LINENO
+		exit;
+	fi
+
+	if [ ! -d /vz/private/${MYUUID} ]; then
+		echo "/vz/private/${MYUUID} does not exist for CTID ${CTID}" 2>&1 | tee -a $LOGFILE
+		home_location=$(prlctl list -i ${VZ7vpsid} | grep -i ^HOME | awk '{print $2}');
+		if [ "$home_location" = "" ]; then
+			echo "Can not find path";
+			exit;
+		fi
+	else
+		home_location="/vz/private/${MYUUID}";
+	fi
+
+	if [ ! "$3" = "" ]; then
+		check_for_email $3
+	fi
+
+        trap "{ cleanupvz7; exit; }" EXIT
+
+	prlctl snapshot ${VZ7vpsid} 2>&1 | tee -a $LOGFILE
+
+	
+        $my_path/ismkdir vps${CTID} 2>&1 | tee -a $LOGFILE
+
+	# removed root.hdd from here as we need to ensure we get all the data
+	if [ -x /usr/bin/zstd ]; then
+		BACKUP_NAME=${CTID}-backup-${date}-${random_ext}.zst
+	else
+		if [ -f /root/.swift/_lesspriv ]; then
+			echo 'ZSTD is needed for minio mode';
+			exit;
+		fi
+		BACKUP_NAME=${CTID}-backup-${date}-${random_ext}.tgz
+	fi
+
+	echo "Saving as $BACKUP_NAME";
+
+        $my_path/fly vps${CTID} $home_location/ frombackup $BACKUP_NAME $myuuID 2>&1 | tee -a $LOGFILE
+	
+        trap - TERM
+
+        if [ "$email" = '' ]; then
+                echo 'Not sending email';
+        else
+                send_email
+        fi
+
+	echo 'No snapshots should remain';
+	prlctl snapshot-list ${VZ7vpsid}  --no-header
+	end_backup_date
+
+# this is for legacy openvz
+elif [ -e /usr/sbin/vzctl ]; then
+
+	echo 'OpenVZ' 2>&1 | tee -a $LOGFILE
+	CTID=$ID;
+
+	if [ ! -e /etc/vz/conf/$CTID.conf ]; then
+		echo 'vz/conf file not found' 2>&1 | tee -a $LOGFILE
+		exit;
+	fi
+
+	if [ ! `vzlist -H $CTID -o layout` = "ploop" ]; then
+        	echo "$CTID is not ploop" 2>&1 | tee -a $LOGFILE
+		echo 'Will run slower on the fly backup with out a snapshot' 2>&1 | tee -a $LOGFILE
+		sleep 5s;
+
+		if [ -d /vz/private/${CTID} ]; then
+			BACKUP_NAME=simfs-${CTID}-backup-${date}-${random_ext}.tgz
+			echo "Saving as $BACKUP_NAME";
+			$my_path/ismkdir vps${CTID} 2>&1 | tee -a $LOGFILE
+			$my_path/fly vps${CTID} /vz/private/${CTID} frombackup $BACKUP_NAME | tee -a $LOGFILE
+			
+			# nothing else to do with non ploop
+			echo 'Non ploop backup is completing exiting';
+			exit;
+		else
+			echo "/vz/private/${CTID} does not exist" | tee -a $LOGFILE
+			exit;
+		fi		
+	fi
+
+	# email
+	if [ ! "$3" = "" ]; then
+		check_for_email $3
+	fi
+
+	myuuID=$(uuidgen)
+	VE_PRIVATE=$(vzlist -H -o private $CTID)
+
+	trap "{ cleanupvz; exit; }" EXIT
+
+	vzctl snapshot $CTID --id $myuuID --skip-suspend --skip-config 2>&1 | tee -a $LOGFILE
+
+	$my_path/ismkdir vps${CTID} 2>&1 | tee -a $LOGFILE
+
+	BACKUP_NAME=${CTID}-backup-${date}-${random_ext}.tgz
+
+	echo "Saving as $BACKUP_NAME";
+
+	$my_path/fly vps${CTID} $VE_PRIVATE/root.hdd/ frombackup $BACKUP_NAME $myuuID 2>&1 | tee -a $LOGFILE
+
+	if [ "$email" = '' ]; then
+		echo 'Not sending email';
+	else
+		send_email
+	fi
+
+	trap - TERM
+
+	echo 'No snapshots should remain';
+	vzctl snapshot-list $CTID  --no-header
+	end_backup_date
+else
+	echo 'No VM software found' 2>&1 | tee -a $LOGFILE
+fi
+

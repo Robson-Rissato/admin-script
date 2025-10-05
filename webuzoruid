@@ -1,0 +1,18 @@
+#!/bin/bash
+
+if [ -d /var/webuzo ]; then
+        webuzouser=`cat /var/webuzo/webuzo.conf  | grep ^WU_USER | cut -d= -f2`;
+        if [ -f /usr/local/apps/apache/etc/httpd.conf ]; then
+                echo 'Apache 2.2';
+                /admin/replace-linux "User apache" "User $webuzouser" -- /usr/local/apps/apache/etc/httpd.conf
+                /admin/replace-linux " RUidGid apache apache" "RUidGid $webuzouser $webuzouser" -- /usr/local/apps/apache/etc/conf.d/ruid.conf
+                /etc/init.d/httpd restart
+        elif [ -f /usr/local/apps/apache2/etc/httpd.conf ]; then
+                echo 'Apache 2.4';
+                /admin/replace-linux "User apache" "User $webuzouser" -- /usr/local/apps/apache2/etc/httpd.conf
+                /admin/replace-linux " RUidGid apache apache" "RUidGid $webuzouser $webuzouser" -- /usr/local/apps/apache2/etc/conf.d/ruid.conf
+                /etc/init.d/httpd restart
+        else
+                echo 'Apache is not installed';
+        fi
+fi

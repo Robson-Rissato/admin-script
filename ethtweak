@@ -1,0 +1,19 @@
+#!/bin/sh
+
+if [ -e /etc/wwwacct.conf ]; then
+	ETH=`cat /etc/wwwacct.conf | grep ^ETHDEV | cut -d " " -f2`;
+fi
+
+if [ "$ETH" = "" ]; then
+	ETH=eth0;
+fi
+
+echo "Found $ETH";
+
+if [ -e /sbin/ifconfig -a -e /usr/sbin/ethtool ]; then
+
+	/sbin/ifconfig $ETH txqueuelen 1000
+	/usr/sbin/ethtool -K $ETH tso off
+else
+	echo 'Can Not run: ethtool not installed?';
+fi

@@ -1,0 +1,53 @@
+#!/bin/bash
+
+if [ -e /usr/sbin/unitd ]; then
+	echo 'Skipping propack directadmin';
+	exit;
+fi
+
+if [ -e /etc/cgconfig.conf ]; then
+        echo '/etc/cgconfig.conf exists exiting';
+        exit;
+fi
+
+if [ ! -f /etc/debian_version ]; then
+        echo 'tested on ub/debian only';
+        exit;
+fi
+
+if [ ! -d /usr/local/directadmin ]; then
+        echo 'directadmin only';
+        exit;
+fi
+
+if [ ! -d /etc/systemd/system ]; then
+        echo 'no /etc/systemd/system';
+        exit;
+fi
+
+if [ ! -e /usr/share/doc/cgroup-tools/examples/cgred.conf ]; then
+        apt -y install cgroup-tools
+fi
+
+if [ ! -f /usr/share/doc/cgroup-tools/examples/cgred.conf ]; then
+        echo 'Did not find /usr/share/doc/cgroup-tools/examples/cgred.conf exiting';
+        exit;
+fi
+
+cp /usr/share/doc/cgroup-tools/examples/cgred.conf /etc/
+cp /admin/storage/config/cgconfig.conf /etc/cgconfig.conf
+touch /etc/cgrules.conf
+
+cp /admin/storage/config/cgrulesgend.service /etc/systemd/system
+cp /admin/storage/config/cgconfigparser.service /etc/systemd/system
+
+
+
+systemctl daemon-reload
+systemctl enable cgconfigparser
+systemctl enable cgrulesgend
+systemctl start cgconfigparser
+/admin/storage/buildcgroup
+# in buildcgroup
+#systemctl start cgrulesgend
+

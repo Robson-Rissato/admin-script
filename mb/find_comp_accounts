@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+
+#testing in cpanel first
+if [ ! -f /var/log/exim_mainlog ]; then
+	echo 'missing exim main log';
+	exit;
+fi
+
+if [ ! -d /root/tmp ]; then
+	echo 'missing tmp';
+	exit;
+fi
+
+list=/root/tmp/list;
+touch $list;
+if [ ! -f $list ]; then
+ echo $list needs to be a file
+ exit
+fi
+echo > $list
+IFS="
+"
+datas=`grep "T=\"Smtp" /var/log/exim_mainlog | cut -d" " -f14- | rev | cut -d" " -f1-4 | rev`;
+for data in $datas; do
+ printf "${data}\n";
+ email=$(cut -d' ' -f4 <<< "$data")
+ if [ ! "$email" = "" ]; then
+  echo $email >> $list
+ fi
+done
+
+cat $list | sort | uniq

@@ -1,0 +1,43 @@
+#!/bin/bash
+
+if [ ! -d /var/cpanel/users ]; then
+        echo 'no /var/cpanel users';
+        exit;
+fi
+
+if [ -d /opt/cpanel/ea-php56/root/etc/php.d ]; then
+        echo "suhosin.executor.include.whitelist = phar" >> /opt/cpanel/ea-php56/root/etc/php.d/300-suhosin.ini
+else
+        echo 'No /opt/cpanel/ea-php56/root/etc/php.d';
+        exit;
+fi
+
+if [ ! -e /usr/local/cpanel/modules-install/cpanel-wordpress-instance-manager-plugin ]; then
+        yum -y install cpanel-wordpress-instance-manager-plugin cpanel-wp-cli wordpress-cpaddon
+fi
+
+if [ "$1" = "all" ]; then
+	cd /var/cpanel/users
+	for i in *; do
+       		if [ ! -e  /var/cpanel/suspended/$i ]; then
+                	if [ "$i" = "nobody" -o "$i" = "system" ]; then
+                        	echo "skipping $i";
+                        	continue;
+                	else
+                        	uapi --user=$i WordPressInstanceManager start_scan; sleep 1m
+                	fi
+        	else
+                	echo "$i is suspended";
+                	continue;
+        	fi
+	done
+elif [ "$1" = "" ]; then
+	echo './cpanel_wpmanager all|username';
+else
+	if [ ! -f /var/cpanel/users/$1 ]; then
+		echo "$1 does not exist";
+		exit;
+	else
+		uapi --user=$1 WordPressInstanceManager start_scan
+	fi
+fi

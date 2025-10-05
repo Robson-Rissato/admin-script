@@ -1,0 +1,457 @@
+#!/usr/bin/env bash
+
+# 08/10/2025
+# a basic root kit checker
+# this pulls data from https://github.com/CpanelInc/tech-CSI as well as checks for other basic backdoors
+# this should be used for a quick security scan of a server but will not find everything
+
+if [ -f /admin/includes/common_bash_functions ]; then
+        source /admin/includes/common_bash_functions
+fi
+
+mytmp=/root/tmp;
+
+if [ ! -d ${mytmp} ]; then
+        mkdir -p ${mytmp}
+fi
+
+if [ -d ${mytmp} ]; then
+
+	for remotefile in suspicious_procs.txt suspicious_files.txt suspicious_cron_strings.txt; do
+        	if [ -f ${mytmp}/${remotefile} ]; then
+                	/bin/rm -v ${mytmp}/${remotefile}
+        	fi
+
+        	if [ -x /usr/bin/wget ]; then
+                	wget -4 -q --timeout=10 -O ${mytmp}/${remotefile} https://raw.githubusercontent.com/CpanelInc/tech-CSI/master/${remotefile} > /dev/null
+			wget -4 -q --timeout=10 -O ${mytmp}/shenanigans.txt https://raw.githubusercontent.com/CpanelInc/tech-cp_license_troubleshooter/master/shenanigans.txt > /dev/null
+        	elif [ -x /usr/bin/curl -o -x /usr/local/bin/curl ]; then
+                	curl -o ${mytmp}/${remotefile} --connect-timeout 10 --silent https://raw.githubusercontent.com/CpanelInc/tech-CSI/master/${remotefile}
+			curl -o  ${mytmp}/shenanigans.txt  --connect-timeout 10 --silent https://raw.githubusercontent.com/CpanelInc/tech-cp_license_troubleshooter/master/shenanigans.txt 
+        	else
+                	echo 'security scan needs curl or wget to continue';
+                	exit;
+        	fi
+	done
+
+	# suspicious_files.txt 
+        if [ -f ${mytmp}/suspicious_files.txt ]; then
+
+                check=`head -n 1 ${mytmp}/suspicious_files.txt`;
+                if [ ! "$check" = "\"/home/ ./root\"" ]; then
+                        echo 'Could not verify suspicious_files.txt';
+                        /bin/rm -v ${mytmp}/suspicious_files.txt
+                        exit;
+                fi
+
+                kits=0;
+IFS="
+"
+                echo -n 'Checking for rootkits.';
+                for badfile in `cat ${mytmp}/suspicious_files.txt`; do
+                        if [ -e "${badfile}" ]; then
+
+				# freebsd false positive
+				if [ "$badfile" = "/usr/libexec/ssh-keysign" ]; then
+					if [ -f /etc/master.passwd ]; then
+						continue;
+					fi
+				fi
+
+				#gtop alternative
+				if [ "$badfile" = "/root/.cargo/registry" ]; then
+					if [ -d /root/cpaneldirect ]; then
+						continue;
+					fi
+				fi
+
+                                echo " * ${cyan}WARNING${normal} possible root kit or malware found ${badfile}";
+                                kits=1;
+				dosleep;
+                        fi
+                done
+                if [ "$kits" = "0" ]; then
+                        echo '.none found';
+			dosleep;
+                else
+                        echo 'A possible rootkit was found';
+                fi
+
+                /bin/rm ${mytmp}/suspicious_files.txt
+        else
+                echo 'Could not download suspicious_files.txt';
+		dosleep;
+        fi
+	# done suspicious files
+
+	#suspicious_procs.txt
+	if [ -f ${mytmp}/suspicious_procs.txt ]; then
+		pcheck=`head -n 1 ${mytmp}/suspicious_procs.txt`;
+		if [ "$pcheck" = "./checkstatus" ]; then
+IFS="
+"
+			echo -n 'Checking for suspicious processes.';
+			for sus in `cat ${mytmp}/suspicious_procs.txt`; do 
+				sussy=`ps auxw | grep "$sus" | egrep -v "cpanelsolr|dhcpd" | grep -v grep`;
+				if [ ! "$sussy" = "" ]; then
+					echo " * ${cyan}WARNING${normal} suspicious proc found $sussy";
+					dosleep;
+				fi
+			done
+				echo -n '.done';
+                     		echo
+		else
+			echo 'Failed to validate suspicious_procs.txt';
+		fi
+
+		/bin/rm ${mytmp}/suspicious_procs.txt
+	else
+		echo 'Could not download suspicious_procs.txt';
+		dosleep;
+	fi
+	
+	# sus cron scripts we will just do a basic grep
+	#grep -f suspicious_cron_strings.txt *
+	if [ -f ${mytmp}/suspicious_cron_strings.txt ]; then
+		scroncheck=`head -n 1  ${mytmp}/suspicious_cron_strings.txt`;
+		if [ "$scroncheck" = "tor2web" ]; then
+			echo '	Looking for suspicious cron strings';
+			if [ -d /var/spool/cron/crontabs ]; then
+				grep -f ${mytmp}/suspicious_cron_strings.txt /var/spool/cron/crontabs/*
+				grep -ri "perl /var/tmp/" /var/spool/cron/crontabs/*
+			elif [ -d /var/spool/cron ]; then
+				grep -f ${mytmp}/suspicious_cron_strings.txt /var/spool/cron/*
+				grep -ri "perl /var/tmp/" /var/spool/cron/*
+			else
+				echo 'Unable to find cron folder';
+			fi
+			dosleep;
+		fi
+	else
+		echo 'Failed to validate suspicious_cron_strings.txt';
+	fi
+	/bin/rm ${mytmp}/suspicious_cron_strings.txt
+
+	# shenanigans.txt only for cpanel
+	if [ -d /usr/local/cpanel ]; then
+IFS="
+"
+		if [ -f ${mytmp}/shenanigans.txt ]; then
+			shencheck=`head -n 1 ${mytmp}/shenanigans.txt`;
+			if [ "$shencheck" = "/YasITCSP/" ]; then
+				echo '	Looking for cracked licenses';
+				for sbadfile in `cat ${mytmp}/shenanigans.txt`; do
+					if [ -e "$sbadfile" ]; then
+						echo "$sbadfile exists a service may not be licensed log out and confirm cpanel / imunify / directadmin / litespeed licenses or do not provide support";
+						dosleep;
+					fi
+				done
+			else
+				echo 'Unable to verify shenanigans.txt from cpanel';
+				echo "$shencheck";
+			fi
+			dosleep;
+		fi
+
+	fi
+	/bin/rm ${mytmp}/shenanigans.txt
+
+else
+        echo "Could not create ${mytmp}";
+fi
+
+#sha256check
+# todo look through cpanel sha256 file
+if [ -x /usr/bin/sha256sum ]; then
+	for checkfile in /bin/passwd /usr/bin/passwd; do
+		if [ -f $checkfile ]; then
+			filechecksum=`/usr/bin/sha256sum $checkfile`;
+			if [ "$filechecksum" = "e84636cf7f19dcded99c7fd173a6b4132dfe33ef761e27d457aa0bccb154240a" ]; then
+	                	echo " * ${cyan}WARNING${normal} /bin/passwd is backdoored and will disclose the passwd";
+				dosleep;
+			fi
+		fi
+	done
+else
+	echo 'Missing /usr/bin/sha256sum'; 
+fi
+
+if [ -f /etc/ssh/sshd_config ]; then
+	restrictioncheck=`grep ^AllowUsers /etc/ssh/sshd_config | grep root@`;
+	if [ "$restrictioncheck" = "" ]; then
+		echo " * ${cyan}WARNING${normal} sshd root access is not restricted by ip";
+		dosleep;
+	else
+		echo " ${green}SSHD root is restricted${normal}";
+		echo $restrictioncheck;
+		echo
+	fi
+
+	rootnorestrict=`egrep "(root\s|\sroot$)" /etc/ssh/sshd_config`;
+	if [ !"$rootnorestrict" = "" ]; then
+		echo "	* ${cyan}WARNING${normal} allowuser root with no ip restriction is set in /etc/ssh/sshd_config";
+		dosleep;	
+	fi
+
+	pwcheck=`grep ^PermitRootLogin /etc/ssh/sshd_config | awk '{print $2}'`;
+	if [ "$pwcheck" = "without-password" -o "$pwcheck" = "no" ]; then
+		echo " ${green}SSHD root with password is off or requires a key${normal}"
+		echo
+	else
+		echo " * ${cyan}WARNING${normal} sshd root may allow a password - change this to without-password";
+		dosleep;
+	fi
+
+	if [ -f /etc/hosts.deny ]; then
+		tcpwrapcheck=`grep "sshd: ALL" /etc/hosts.deny | tail -n 1`;
+		if [ "$tcpwrapcheck" = "sshd: ALL" ]; then
+			echo "${green}SSHD is ip restricted${normal} in /etc/hosts.deny";
+			echo
+		else
+			# don't need to see this on shared hosting serversx
+			if [ ! -d /usr/local/directadmin ]; then
+				echo " * ${cyan}SSHD is not restricted${normal} in /etc/hosts.deny";
+				echo
+				dosleep;
+			fi
+		fi
+	else
+		echo 'Missing /etc/hosts.deny tcp wrappers may not be supported';
+		echo
+	fi
+else
+	echo 'Missing /etc/ssh/sshd_config';
+	echo
+fi
+
+# samba have not needed this in years
+if [ -x /usr/sbin/smbd ]; then
+	echo " * ${cyan}WARNING${normal} samba is installed (/usr/sbin/smbd exists) which is often not needed";
+        dosleep;
+fi
+
+# display last as long as it is not freebsd
+if [ ! -f /etc/master.passwd ]; then
+	echo 'Last logins';
+	last -i -n 10
+	dosleep;
+fi
+
+# known comrpomised ssh keys
+for sshkeyfile in /root/.ssh/authorized_keys /root/.ssh/authorized_keys2 /home/admin/.ssh/authorized_keys /home/admin/.ssh/authorized_keys2; do
+	if [ -f ${sshkeyfile} ]; then
+		for sshkeysearch in root@u911 mdrfckr; do
+			mdrfckr=`grep ${sshkeysearch}$ ${sshkeyfile}`;
+			if [ ! "$mdrfckr" = "" ]; then
+	        		echo " * ${cyan}WARNING${normal} $sshkeysearch ssh key found in /root/.ssh/authorized_keys";
+				dosleep;
+			fi
+		done
+	fi
+done
+
+# check for extra lines not in a default /etc/crontab file
+if [ -f /etc/crontab ]; then
+	#remove white space at the end
+	crontabcheck=`egrep -v "/etc/cron\.|^#|^SHELL=|^PATH=|^MAILTO=root" /etc/crontab | grep -v -e '^[[:space:]]*$'`;
+	if [ ! "$crontabcheck" = "" ]; then
+		echo "	* ${cyan}WARNING${normal} check over /etc/crontab";
+		cat /etc/crontab | grep -v ^# | grep -v -e '^[[:space:]]*$'
+		dosleep;
+	fi
+fi
+
+#a quick regex of bad processes
+if [ -x /usr/bin/pstree ]; then
+	echo
+	echo 'Check for bad processes (no results is good - timeout check may lead to false positives so double check processes with timeout in them)';
+	pstree -p | egrep "(ogkzcympjxwv|pnsnba|tsm|kdevtmpfsi|blitzbasic|kettenrad|\[bioset\]|wwizzrstcn|xnoyivgb|wknhuur|mrtgrunq|gs-dbus|gs-bd|rezemjkd|phugrcaxq|timeout|perfctl|Cli|postfixd|watchdogg|shortcodes|mcm\.x86_64)"
+	dosleep;
+else
+	echo 'Install pstree to check for bad processes';
+fi
+
+# a list of bad folders not yet in cpanel csi
+if [ -d /etc/selinux/targeted/plugins/ ]; then
+	echo " * ${cyan}WARNING${normal} /etc/selinux/targeted/plugins/ exists which was used in rootkit on ubuntu/zabbix ([bioset])"
+	dosleep;	
+fi
+
+# miner software
+for miners in /root/c3pool/xmrig /etc/./systemd/system/c3pool_miner.service /etc/./systemd/system/multi-user.target.wants/c3pool_miner.service; do
+	if [ -e ${miners} ]; then
+		echo "	*  ${cyan}WARNING${normal} found miner software at ${miners}";
+		dosleep;
+	fi
+done
+
+for tmprsync in .X2s1-unix .X2eg-unix; do
+	if [ -e /tmp/${tmprsync}/.rsync ]; then
+		echo " * ${cyan}WARNING${normal} found /tmp/${tmprsync}/.rsync used in go/tsm scanning";
+		dosleep;
+	fi
+done
+
+# basic list of bad files found
+for badfiles in /usr/bin/w­ /etc/cron.hourly/0 /tmp/.X25-unix/.rsync /root/.config/cron/perfcc /etc/cron.d/perfclean /bin/perfcc /lib/libudev.so /bin/ygljglkjgfg0 /bin/good /usr/bin/good /usr/bin/ygljglkjgfg0 /bin/nqhoryuybnpsa /usr/bin/iqiqulthyu /etc/data/kinsing /etc/data/libsystem.so /tmp/kdevtmpfsi /tmp/sysupdater /sbin/pam_tms /dev/shm/watchdogg /dev/shm/pid.lock /usr/.work/work32 /tmp/xmr /tmp/kinsing /tmp/auth.sh /tmp/secure.sh /tmp/aeokzxwx.txt /etc/systemd/system/kmodaudit.service /usr/bin/.local/bin/crontab /usr/bin/.local/bin/ldd /usr/bin/.local/bin/lsof /usr/bin/.local/bin/strace /usr/bin/.local/bin/top /bin/.local/bin/strace /lib/libgcwrap.so /etc/systemd/system/kmodaudit.timer /usr/lib/libsystemd-shared-165.so /var/spool/.system /etc/.httpd /var/.httpd /etc/... /usr/bin/zzhcht /bin/zzhcht /root/.1 /tmp/.X2ei-unix /root/.configrc5 /tmp/./.X291-unix/.rsync /tmp/lol /tmp/RUN /tmp/x86_64 /usr/games/.ssh /usr/lib/popauth /etc/cron.daily/dnsquery /etc/rc.d/init.d/killd /tmp/.motherfucker /tmp/fax /tmp/linux /root/.2142045009948097662 /.mod /usr/lib/libgdi.so.0.8.2; do
+	if [ -e "${badfiles}" ]; then
+		echo " * ${cyan}WARNING${normal} detected possible root kit or suspicious user file ${badfiles} - inspect them";
+		if [ "${badfiles}" = "/sbin/pam_tms" ]; then
+	                echo 'check /etc/pam.d/common-auth for /sbin/pam_tms';
+                fi
+		dosleep;
+	fi
+done
+
+if [ -f /tmp/up.txt ]; then
+	echo " ${cyan}WARNING${normal} * found /tmp/up.txt which may include the ssh username and password that was compromised and normally the password is really weak";
+	dosleep;
+fi
+
+
+ps auxw | egrep  --regex "php.*\/l.php" | grep -v grep
+dosleep;
+
+if [ ! "$LD_PRELOAD" = "" ]; then
+        echo " * ${cyan}WARNING${normal} enviromental variable $LD_PRELOAD is not empty";
+	dosleep;
+fi
+
+if [ -e /sbin/dropbear ]; then
+	echo " * ${cyan}WARNING${normal} non standard ssh /sbin/dropbear exists";
+	dosleep;
+fi
+
+if [ -f /etc/yum.repos.d/tor.repo ]; then
+	echo " * ${cyan}WARNING${normal} non standard repo exists /etc/yum.repos.d/tor.repo";
+	dosleep;
+fi
+
+
+if [ -f /etc/ld.so.preload ]; then
+	echo " * ${cyan}WARNING${normal} /etc/ld.so.preload exists";
+	cat /etc/ld.so.preload
+	dosleep;
+fi
+
+echo "Checking for unknown processes (no return is good, except false positives)";
+ps --no-headers auxw | egrep -v ^"hpsmh|postgres|clamscan|clamupd|cpanel|root|dovecot|mailnull|mailman|mysql|wp-tool|rpc|dbus|polkitd|chrony|named|nscd|apache|_rspamd|clamav|rngd|mail|imunify|diradmin|ossec|mongo|postfix|libvirt|syslog|dhcpd|daemon|systemd|uuidd" | egrep -v "litespeed|lsphp|/usr/sbin/httpd|nginx|php-fpm|webmaild|sshd|cpaneld|/usr/libexec/openssh/sftp-server|/usr/local/directadmin/directadmin|/usr/local/bin/redis-server|/usr/bin/redis\-server|memcached\.sock|artisan|wp-cron|jbm\.account|/usr/sbin/pure-ftpd|/usr/bin/memcached|proftpd|sftp\-server|sd\-pam|bin\/lswsgi|pure\-ftpd|jailshell|softaculous"
+dosleep;
+
+#https://raw.githubusercontent.com/CpanelInc/tech-cp_license_troubleshooter/master/shenanigans.txt
+if [ -d /usr/local/cpanel ]; then
+	# these are only check if cpanel is installed
+	for filecheck in /bin/agent6.cpl /bin/cpk /bin/cplicense /bin/cplicense-32bit /bin/cplicense-64bit /opt/license/cpanel.lisc /etc/init.d/checkstatus /etc/init.d/cspdaemon /usr/bin/checkstatus /usr/local/cpanel/cpane1.lisc /usr/bin/clnupdate /usr/bin/cPanelCentral_Sitepad /usr/bin/cPanelCentral_cPanel /usr/bin/cPanelCentral_Softaculous /usr/bin/cpanelmodule.php /usr/bin/cpd /usr/bin/csp /usr/bin/CSPcPanel /usr/bin/GBdaemon /usr/bin/gbcprunner /usr/bin/update_clnv2 /usr/bin/update_cpanelv2 ]; do
+		if [ -e ${filecheck} ]; then
+			echo " * ${cyan}WARNING${normal} found ${filecheck} which may mean cpanel is not fully licensed and backdoored. Log out of the server and do not offer technical support";
+			dosleep;
+		fi
+	done
+fi
+
+
+# check for multiple admin users
+if [ -f /usr/local/directadmin/data/admin/admin.list ]; then
+	echo 'DirectAdmin Detected';
+	echo 'current admin users'
+	cat /usr/local/directadmin/data/admin/admin.list
+	dosleep;
+fi
+
+
+# check for int users
+# check for other root users
+if [ -f /etc/passwd ]; then
+	intcheck=`grep ^int: /etc/passwd`;
+	if [ ! "$intcheck" = "" ]; then
+		echo " * ${cyan}WARNING${normal} user int exists which may be default from the installer. Verify if it is needed";
+		printf "$intcheck";
+		dosleep;
+	fi
+
+	rootcheck=`grep x:0: /etc/passwd | grep -v ^root:`;
+	if [ ! "$rootcheck" = "" ]; then
+		echo " * ${cyan}WARNING${normal} there appears to be a second root user - likely compromise";
+		printf "$rootcheck";
+		echo
+		dosleep;
+	fi
+
+	ispwned=`grep :pwned: /etc/passwd | grep ^root`;
+	if [ ! "$ispwned" = "" ]; then
+		echo " * ${cyan}WARNING${normal} name on root owned is listed as pwned - likely compromise";
+                printf "$ispwned";
+		echo
+                dosleep;
+	fi
+	bincheck=`grep bin:x:1:1:bin:/bin:/bin/bash /etc/passwd`;
+	if [ ! "$bincheck" = "" ]; then
+                echo " * ${cyan}WARNING${normal} user bin has bash set - likely compromise";
+		printf "$bincheck";
+                echo
+                dosleep;
+	fi
+fi
+
+# /etc/ld.so.preload could be hidden
+if [ -x /bin/strace ]; then
+	if [ ! -f /etc/master.passwd ]; then
+		if [ ! -f /etc/ld.so.preload ]; then
+			preloadcheck=`strace /bin/ls /admin/tests 2>&1 | grep "access(\"/etc/ld.so.preload\", R_OK)" | grep -v -i  "No such file or directory" | awk '{print $1}'`;
+			if [ "$preloadcheck" = "access(\"/etc/ld.so.preload\"," ]; then
+				echo " * ${cyan}WARNING${normal} name /etc/ld.so.preload appears to not exist but strace shows R_OK loading likely /lib/libgcwrap.so and compromise";
+			fi
+		fi
+	fi
+else
+	echo 'Install strace for further tests (checking for /bin/strace)';
+	dosleep;
+fi
+
+# compare /var/cpanel/users to /etc/passwd excluding known users
+# generally we will never see a user created outside of cpanel that is not included in the list
+if [ -d /var/cpanel/users ]; then
+        for cpuser in `cat /etc/passwd | cut -d: -f1`; do
+                skip=0;
+                if [ ! -f /var/cpanel/users/$cpuser ]; then
+			IFS=" "
+                        okusers='root bin daemon adm lp sync shutdown halt mail operator games ftp nobody systemd-network dbus saslauth mailnull smmsp rpc apache named sshd nscd tcpdump cpanel cpanellogin cpaneleximfilter cpaneleximscanner cpanelconnecttrack cpanelanalytics cpanelcabcache cpanelroundcube mailman dovecot dovenull cpanelphppgadmin cpanelphpmyadmin mysql cpses tss tomcat clamav munin cpanelsolr postgres memcached cpanel-ccs _imunify imunify360-webshield ossec ossecr ossecm ossece sw-cp-server wp-toolkit rpcuser nfsnobody quags polkitd systemd-coredump systemd-resolve unbound sssd chrony redis firebird mongod lsadm imunify360-scanlogd clamupdate hpsmh cpanelrrdtool systemd-bus-proxy avahi-autoipd';
+                        for okuser in $okusers; do
+                                if [ "$cpuser" = "$okuser" ]; then
+                                        skip=1;
+                                        break;
+                                fi
+                        done
+                        if [ "$skip" = "0" ]; then
+                                echo " * ${cyan}NOTE${normal} User created outside of cpanel $cpuser";
+                                grep ^$cpuser: /etc/passwd
+				dosleep;
+                        fi
+                fi
+        done
+fi
+
+if [ -d /usr/local/directadmin -o -d /usr/local/cpanel ]; then
+	mysqlcheck=`echo "SELECT User FROM user WHERE Super_priv = 'Y' AND User NOT IN ('root', 'mysql.session', 'da_admin', 'mysql');" | mysql mysql | grep -v ^User$`;
+	if [ ! "$mysqlcheck" = "" ]; then
+		echo "${cyan}WARNING${normal} Found mysql users with Super_priv enabled";
+		printf "${mysqlcheck}";
+		echo
+		echo "REVOKE with a query like: REVOKE SUPER ON *.* FROM \'linktoli_wp340\'@\'localhost\'";
+		dosleep;
+	fi
+fi
+
+if [ -f /usr/local/cpanel/logs/access_log ]; then
+	echo "Past logins to WHM";
+	cat /usr/local/cpanel/logs/access_log | grep "\- root \[" | grep "HTTP/1.1\" 200" | grep -v "FAILED LOGIN"  | awk '{print $1 " " $3 " " $4}'  | rev | cut -d: -f4- | rev | sort | uniq | egrep -v "66.45.228.251|106.51.49.165|66.45.233.83|66.45.235.105|88.198.109.76|66.45.235.226|66.45.235.94|173.225.104.170" | grep root | grep "\["
+fi
+echo
+
+if [ -f /var/cpanel/resellers ]; then
+        for resellercheck in `grep ",all," /var/cpanel/resellers | cut -d: -f1`; do
+                echo "${cyan}WARNING${normal} Reseller ${resellercheck} has an acl with ALL ACCESS";
+                dosleep;
+        done
+fi
+

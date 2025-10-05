@@ -1,0 +1,8 @@
+#!/bin/sh
+
+if [ "$1" = "" ]; then
+	echo "./libprovides [binary] (ie /usr/sbin/exim)";
+	exit;
+fi
+
+for i in $(ldd $1 | awk '{print $3 }'); do echo -n "$i      "; rpm -q --whatprovides $i; done

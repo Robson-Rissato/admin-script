@@ -1,0 +1,10 @@
+#!/bin/bash
+
+if [ -e /usr/local/cpanel ]; then
+	user=nobody;
+	for i in $(ipcs | grep ^0 | grep ${user} | awk '{print $2 }'); do ipcrm sem $i; done
+elif [ -f /var/webuzo/webuzo.conf ]; then
+	wu=`grep ^WU_USER= /var/webuzo/webuzo.conf  | cut -d= -f2`;
+	for i in $(ipcs | grep ^0 | grep ${wu} | awk '{print $2 }'); do ipcrm sem $i; done
+	for i in $(ipcs | grep ^0 | grep apache | awk '{print $2 }'); do ipcrm sem $i; done
+fi

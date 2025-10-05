@@ -1,0 +1,379 @@
+#!/usr/bin/env bash
+
+# flow chart
+# call /admin/tests/include/detectos
+# if cpanel call https://ssp.cpanel.net/ssp (unless run with fast) and /admin/configs/ssp
+# if kvm call /scripts/check_common_problems
+# if directadmin call /admin/storage/tests/ssp
+# all systems then call
+# /admin/tests/include/quicksecurityscan
+# /admin/tests/include/forwardreverse
+# /admin/tests/include/disk
+# if mailbaby call /admin/mb/restart_rspamd
+# if webuzo call /admin/webuzo/ssp
+
+echo
+
+if [ -f /admin/includes/common_bash_functions ]; then
+        source /admin/includes/common_bash_functions
+fi
+
+if [ -x /usr/bin/shuf ]; then
+	if [ -f /admin/tests/didyouknow ]; then
+		echo 'Random lesson:';
+		shuf -n 1 /admin/tests/didyouknow
+		echo
+		sleep 1;
+	fi
+fi
+
+# for mb
+if [ -f /etc/master.passwd ]; then
+	if [ -x /usr/bin/uname ]; then
+		uname -npr
+	else
+		echo '	* NOTE missing /usr/bin/uname';
+		dosleep;
+	fi
+
+	# Get the total amount of RAM in bytes
+	total_ram=$(sysctl hw.physmem | awk '{print $2}')
+
+	if [ -f /usr/bin/bc ]; then
+		human_readable_ram=$(echo "$total_ram / 1024^3" | bc)
+		echo "Total RAM: $human_readable_ram GB"
+	else
+		echo "Total RAM: $total_ram";
+		echo '	* NOTE - missing /usr/bin/bc';
+		sleep 1;
+	fi
+
+	virt=`sysctl hw.hv_vendor | awk '{print $2}'`;
+	echo -n 'System is';
+
+	if [ "$virt" = "KVMKVMKVM" ]; then
+		echo ' KVM';
+		echo
+	else
+		echo ' Bare metal';
+		echo
+
+		if [ -x /sbin/zpool ]; then
+			zpool status -x
+		fi
+
+		if [ -f /var/run/dmesg.boot ]; then
+			fuckqvo=`grep -E 'ada[0-9]|da[0-9]' /var/run/dmesg.boot | grep QVO`;
+			if [ ! "$fuckqvo" = "" ]; then
+				echo "	* DUDE QVO DRIVES DETECTED";
+				printf "${fuckqvo}";
+				echo
+				sleep 1;
+			fi
+		else
+			echo '	* Note FreeBSD missing /var/run/dmesg.boot';
+		fi
+	fi
+	sleep 1;
+
+	# relay2 once had no zfs errors, high load and dmesg showed these types of errors
+	checkataerrors=`dmesg | egrep "ATA Status Error|I/O error" | tail -n 5`;
+	if [ ! "$checkataerrors" = "" ]; then
+		echo "	* ATA/IO ERRORS detected";
+		printf "${checkataerrors}";
+		echo
+		sleep 1;
+	fi
+
+	if [ -d /var/service/zone-mta ]; then
+		if [ -x /admin/mb/restart_rspamd ]; then
+                        /admin/mb/restart_rspamd c
+                fi
+        fi
+
+	# no further freebsd tests
+	echo
+	exit;
+fi
+
+# basic generic os functions
+if [ -x /admin/tests/include/detectos ]; then
+	/admin/tests/include/detectos
+fi
+
+# cpanel
+if [ -d /usr/local/cpanel ]; then
+
+	if [ "$1" = "fast" ]; then
+		echo 'Skipping cpanel ssp';
+	else
+		echo 'Call /admin/tests/ssp fast - to skip cpanel ssp script';
+		sleep 1;
+		REQUEST='curl -s https://ssp.cpanel.net/ssp'
+
+		if [ -f /usr/local/cpanel/3rdparty/bin/perl ] && [ -x /usr/local/cpanel/3rdparty/bin/perl ] ; then 
+    			$REQUEST | /usr/local/cpanel/3rdparty/bin/perl - $@
+		elif [ -f /usr/bin/perl ] && [ -x /usr/bin/perl ] ; then 
+    			$REQUEST | /usr/bin/perl - $@
+		elif [ -f /usr/local/bin/perl ] && [ -x /usr/local/bin/perl ] ; then 
+    			$REQUEST | /usr/local/bin/perl - $@
+		else
+    			echo 'Could not find a working perl interpreter'
+		fi
+	fi
+	/admin/configs/ssp
+
+# kvm
+elif [ -x /scripts/check_common_problems ]; then
+	if [ -d /root/cpaneldirect ]; then
+		if [ -d /usr/local/directadmin ]; then
+			echo " * ${cyan}WARNING${normal} /usr/local/directadmin exists on a kvm server";
+			sleep 2;
+		fi
+		/scripts/check_common_problems fast
+	fi
+# da
+elif [ -d /usr/local/directadmin ]; then
+        if [ -x /admin/storage/tests/ssp ]; then
+                /admin/storage/tests/ssp
+        fi
+else
+	echo 'Generic server';
+fi
+
+# check for malware
+if [ -x /admin/tests/include/quicksecurityscan ]; then
+	/admin/tests/include/quicksecurityscan
+fi
+
+# not terribly important but looks better in a traceroute for easier debugging and wanguard emails
+if [ -x /admin/tests/include/forwardreverse ]; then
+	/admin/tests/include/forwardreverse
+fi
+
+# da directadmin runs this already
+# so call only for generic servers
+if [ ! -d /usr/local/directadmin ]; then
+	if [ -x /admin/tests/include/disk ]; then
+		/admin/tests/include/disk
+	fi
+fi
+
+# common mysql issues
+if [ -f /var/lib/mysql/mysql.sock.lock ]; then
+	if [ ! -S /var/lib/mysql/mysql.sock ]; then
+		echo "  ${cyan}NOTE${normal} /var/lib/mysql/mysql.sock.lock with out /var/lib/mysql.sock exists if mysql is not starting this lock file can cause the issue and ususally is from full space";
+		echo	
+		sleep 2;
+	fi
+fi
+
+if [ -d /var/lib/mysql ]; then
+	bincheck=`ls /var/lib/mysql/ | grep binlog.`;
+	if [ ! "$bincheck" = "" ]; then
+		echo "  ${cyan}NOTE${normal} /var/lib/mysql has binlogs";
+		echo "To fix add skip-log-bin to /etc/my.cnf";
+		echo
+		sleep 2;
+	fi
+fi
+
+# issue on webuzo. cpanel runs at 0751
+if [ -d /var/lib/mysql ]; then
+	mcheck=`stat -c %a /var/lib/mysql`;
+	if [ "$mcheck" = "700" ]; then
+		echo "  ${cyan}NOTE${normal} /var/lib/mysql has permissions of 700 which may cause db connection errors (seen on webuzo)";
+		echo
+                sleep 2;
+	fi
+fi
+
+# slow server was getting flooded but wasn't noticable at first
+if [ -e /usr/local/lsws/lsrecaptcha/_recaptcha ]; then
+	captchacheck=`ps auxw | grep [/]usr/local/lsws/lsrecaptcha/_recaptcha | wc -l`;
+	if [ "$captchacheck" -gt "40" ]; then
+		echo "  ${cyan}NOTE${normal} There are over 40 litespeed _recaptcha processes which may indicate a flood"
+	        echo
+        	sleep 2;
+	fi
+fi
+
+# webuzo ssp
+if [ -d /usr/local/webuzo ]; then
+	if [ -x /admin/webuzo/ssp ]; then
+		/admin/webuzo/ssp
+	fi
+fi
+
+# zabbix sending notifications due to icmp ratelimit
+if [ -f /etc/csf/csf.conf ]; then
+	icmprate=`grep ^ICMP_IN_RATE /etc/csf/csf.conf | awk '{print $3}' | cut -d\" -f2`;
+	if [ ! "$icmprate" = "0" ]; then
+		echo 'CSF firewall is installed and ICMP_IN_RATE is not set to zero. This means ICMP/ping is rate limited';
+		echo 'If the system is paging down and dmesg shows ICMP_IN_BLOCKED that is the likely cause';
+		echo
+		sleep 2;
+	fi
+fi
+
+# basic dns resolver errror
+# when its a dns problem things get all wierd
+if [ -x /usr/bin/dig -o -x /bin/dig ]; then
+	echo 'Testing root server lookup with dig -4 +short a.root-servers.net @a.root-servers.net';
+	dig -4 +short a.root-servers.net @a.root-servers.net
+	echo
+
+	echo 'Testing lookup of wordpress.org with dig -4 +short wordpress.org';
+	dig -4 +short wordpress.org
+	echo
+
+	echo 'Testing lookup of interserver.net with dig -4 +short interserver.net @66.45.251.218';
+	dig -4 +short interserver.net @66.45.251.218
+	echo
+	sleep 2;
+fi
+
+# screen is useful for all installs
+if [ -f /etc/master.passwd ]; then
+	if [ ! -x /usr/local/bin/screen ]; then
+		echo " * ${cyan}NOTE${normal} missing the very useful /usr/local/bin/screen";
+		echo 'to install use pkg_add -r screen';
+                dosleep;
+	fi
+else
+	if [ ! -x /usr/bin/screen ]; then
+		echo " * ${cyan}NOTE${normal} missing the very useful /usr/bin/screen";
+		echo -n 'to install use';
+		if [ -f /etc/debian_version ]; then
+			echo ' apt install screen';
+		else
+			echo ' yum install screen';
+		fi
+		dosleep; 
+	fi
+fi
+
+if [ -x /usr/bin/dmesg ]; then
+	# not all are an issue but i360.so or ioncube.so in php could be the cause of 503 errors
+	segcheck=`dmesg | grep segfault | tail -n 10`;
+	if [ ! "$segcheck" = "" ]; then
+		echo " * ${cyan}WARNING${normal} segfaults reported in dmesg";
+		printf "${segcheck}";
+		dosleep;
+	fi
+	# classic slow network / packetloss / down system
+	conntrack=`dmesg | grep "nf_conntrack: table full, dropping packet" | tail -n 10`;
+	if [ ! "$conntrack" = "" ]; then
+	        echo " * ${cyan}WARNING${normal} conntrack max errors detected in dmesg. Raise conntrackmax or look into a dos attack";
+		printf "${conntrack}";
+		echo
+		echo -n 'the current setting is ';
+		sysctl net.nf_conntrack_max
+		echo
+		echo 'Example fix: sysctl net.nf_conntrack_max=1024001';
+		echo 'You can add net.nf_conntrack_max=1024000 to /etc/sysctl.conf as well and run sysctl -p';
+                dosleep;
+	fi
+fi
+
+# on openlitespeed servers which cyberpanel can use maxchildren reaching will cause slowness on site
+#please increase LSAPI_CHILDREN
+
+if [ -f /usr/local/lsws/logs/stderr.log ]; then
+	# this file could be large
+	lswsmaxcheck=`tail -n 50000 /usr/local/lsws/logs/stderr.log | grep "please increase LSAPI_CHILDREN"`;
+	if [ ! "$lswsmaxcheck" = "" ]; then
+		echo " * ${cyan}WARNING${normal}  /usr/local/lsws/logs/stderr.log shows PHP MAXCHILDREN has been hit which will cause slowness";
+		dosleep;
+	fi
+fi
+
+# saw on a server this installer should not be in cron
+if [ -f /etc/cron.daily/imav-deploy.sh ]; then
+	echo " * ${cyan}WARNING${normal} /etc/cron.daily/imav-deploy.sh is an installer and should not exist";
+	dosleep;
+fi
+
+if [ -f /usr/bin/imunify360-agent ]; then
+	checkim=`grep files.imunify360.com /etc/hosts`;
+	if [ ! "$checkim" = "" ]; then
+		echo " * ${cyan}WARNING${normal} imunify360 is installed and there is a /etc/host entry for files.imunify360.com which could cause unexpected errors";
+        	dosleep;
+	fi
+fi
+
+# this covers cpanel and directadmin systems
+if [ -e /usr/sbin/cagefsctl ]; then
+	if [ ! -f /usr/share/lve/dbgovernor/mysqlgovernor.py ]; then
+		echo " * ${cyan}NOTE${normal} mysql govenor is not installed on a cloudlinux system";
+		echo 'Useful for killing long running slect queries';
+		dosleep;
+	fi
+
+	if [ -f /etc/redhat-release ]; then
+		if [ ! -e /usr/share/cagefs-skeleton/usr/bin/rsync ]; then
+			echo " * ${cyan}NOTE${normal} missing rsync in cagefs";
+               		echo 'To fix: cagefsctl --addrpm rsync; cagefsctl --force-update';
+                	dosleep;
+		fi
+	fi
+fi
+
+fstrimcheck=`ps auxw | grep [f]strim`;
+if [ ! "$fstrimcheck" = "" ]; then
+	echo " * ${cyan}NOTE${normal} fstrim may be running. Debugging slow disk IO - this may be a cause";
+	printf ${fstrimcheck};
+	dosleep;
+fi
+
+#check for multiple yum processes
+if [ -f /usr/bin/yum ]; then
+	yumcheck=`ps auxw | grep [y]um | grep ^root | grep up | wc -l`;
+	if [ "$yumcheck" -gt 1 ]; then
+		echo "	* ${cyan}WARN${normal} multiple yum updates running rpm may be corrupt";
+		dosleep;
+	fi
+fi
+
+#backup2.is.cc issue
+if [ -f /etc/debian_version ]; then
+	if [ -x /usr/sbin/csf -a -x /usr/sbin/ufw ]; then
+		echo "	${cyan}NOTE${normal} csf and ufw are both installed. on backup2 this caused odd network issues until ufw was disabled/masked and rebooted";
+		dosleep;
+	fi
+fi
+
+# plesk
+if [ -d /usr/local/psa ]; then
+	if [ -f /var/log/nginx/error.log ]; then
+		ofilescheck=`grep -i "too many open files" /var/log/nginx/error.log | tail -n 2`;
+		if [ ! "$ofilescheck" = "" ]; then
+			echo "	${cyan}WARN${normal} /var/log/nginx/error.log shows too many open files";
+			echo "to fix: https://www.plesk.com/kb/support/nginx-fails-to-start-reload-on-a-plesk-server-too-many-open-files/";
+			echo "/usr/local/psa/admin/sbin/websrv_ulimits --set 4096";
+			echo "grep 'Max open files' /proc/$(cat /var/run/nginx.pid)/limits";
+			echo
+			dosleep;
+		fi
+	fi
+	echo 'Checking for any plesk max php connections hit in php-fpm https://support.plesk.com/hc/en-us/articles/12377661896343--Websites-on-PHP-FPM-are-unavailable-or-loading-slowly-server-reached-max-children-setting-OR-pool-seems-busy ';
+	grep -r "server reached max_children setting" /var/log/*php*-fpm/error.log | cut -d' ' -f5 | tr -d ']' | sort | uniq -c | sort -nr
+	dosleep;
+fi
+# end plesk
+
+# /var/crash could use a lot of disk space
+# I see more /var/crash on ubuntu where on rhel I see it more for kernel crashes and reboots
+if [ -d /var/crash ]; then
+	if [ ! -f /etc/master.passwd ]; then
+		crashcheck=`ls /var/crash/ | wc -l`;
+		if [ ! "$crashcheck" = "0" ]; then
+			echo " * ${cyan}WARNING${normal} /var/crash is not empty - check for potential crashes. If they are old clear the folder out";
+		fi
+	fi
+fi
+
+if [ -x /bin/ping ]; then
+	echo 'Testing network connection to my';
+	ping -c 2 mynew.interserver.net
+fi

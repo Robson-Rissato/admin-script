@@ -1,0 +1,117 @@
+#!/usr/bin/env bash
+
+if [ ! -e /etc/debian_version ]; then
+	echo 'Debian Required';
+	exit;
+fi
+
+if [ ! -x /usr/bin/apt-get ]; then
+	echo 'Missing /usr/bin/apt-get';
+	exit;
+fi
+
+
+if [ ! -e /etc/apt/apt.conf.d/50unattended-upgrades ]; then
+	/usr/bin/apt-get install unattended-upgrades
+fi
+
+check=`grep ^quags: /etc/passwd | cut -d: -f1`;
+if [ "$check" = "quags" ]; then
+	echo 'user quags exists for ans';
+else
+	echo 'echo user quags does not exist for ans';
+	sleep 1;
+fi
+
+if [ ! -f /etc/ssh/ssh_host_ed25519_key-cert.pub ]; then
+	echo 'SSH cert is not set up';
+	sleep 1;
+fi
+
+sleep 1s;
+
+if [ ! -f /etc/chrony/chrony.conf ]; then
+	echo 'chrony is not installed. To install run:';
+	echo
+	echo 'apt install chrony';
+	echo
+	sleep 1s;
+fi
+
+if [ ! -f /admin/.info/_unattended ]; then
+	dpkg-reconfigure -plow unattended-upgrades
+	touch /admin/.info/_unattended
+fi
+
+if [ -x /admin/upscripts ]; then
+	/admin/upscripts
+fi
+
+/usr/bin/apt-get update
+/usr/bin/apt-get -y upgrade
+/usr/bin/apt-get -y autoremove
+
+if [ -x /usr/bin/kcarectl ]; then
+	/usr/bin/kcarectl -u
+	# if there is no license this takes to long and we really only need on ubuntu + directadmin
+	if [ -d /usr/local/directadmin ]; then
+		/usr/bin/kcarectl --lib-update
+	fi
+fi
+
+# remove legacy svn
+if [ -f /etc/apt/sources.list.d/WANdisco-svn19.list ]; then
+	if [ -d /root/cpaneldirect ]; then
+		/bin/rm -v /etc/apt/sources.list.d/WANdisco-svn19.list
+	fi
+fi
+if [ "$1" = "a" -o "$1" = "all" -o "$1" = "m" ]; then
+	# da systems
+	if [ -d /usr/local/directadmin ]; then
+		echo 'Running all';
+		systemctl daemon-reload	
+		/admin/storage/check_start_ips.sh
+
+		/admin/updateda all
+		if [ -f /etc/cgrules.conf ]; then
+			/admin/storage/buildcgroup
+		fi
+	# my system
+	elif [ -d /home/my/logs ]; then
+		echo 'Running all';
+		if [ -x /etc/cron.daily/backup.sh ]; then
+			/etc/cron.daily/backup.sh
+		fi
+
+		if [ -x /etc/cron.daily/modsec ]; then
+			/etc/cron.daily/modsec
+			apachectl configtest
+		fi
+	#mailcow
+	elif [ -d /opt/mailcow-dockerized ]; then
+		echo 'Mailcow detected';
+		if [ -d /var/lib/docker/overlay2 ]; then
+			if [ -x /opt/mailcow-dockerized/update.sh ]; then
+				echo 'Running /opt/mailcow-dockerized/update.sh in 3 seconds';
+				sleep 3s;
+				cd /opt/mailcow-dockerized
+				/opt/mailcow-dockerized/update.sh
+			fi
+		else
+			echo 'Missing /var/lib/docker/overlay2';
+		fi
+	elif [ -d /root/cpaneldirect ]; then
+		if [ -d /vz/templates ]; then
+			if [ -x /usr/bin/virsh ]; then
+				echo 'kvmv2 detected';
+				/admin/kvmenable fix all
+			fi
+		fi
+	else
+		echo 'Did not detect service for all';
+	fi
+	if [ -x /admin/tests/include/quicksecurityscan ]; then
+		echo 'Running quick security check';
+		/admin/tests/include/quicksecurityscan
+	fi
+fi

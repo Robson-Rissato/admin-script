@@ -1,0 +1,79 @@
+#!/bin/bash
+
+# for cpanel servers
+# will scan all users or a specific user or a specific directory
+# ./runscan username|folder - or blank for all users
+
+# export JUSTDB=1 - use this to just shelldb q
+
+if [ ! -x /usr/local/cpanel/3rdparty/bin/clamscan ]; then
+        echo 'Missing /usr/local/cpanel/3rdparty/bin/clamscan';
+        exit;
+fi
+
+if [ ! -d /var/cpanel/users ]; then
+        echo 'Missing /var/cpanel/users';
+        exit;
+fi
+
+function get_homedir()
+{
+        homedir=$(grep ^${myuser}: /etc/passwd | cut -d":" -f6);
+        if [ "$homedir" = "/" ]; then
+                echo 'Exiting on homedir of / - scan will take too long';
+                exit;
+        fi
+}
+
+if [ "$1" = "" ]; then
+        echo 'Scanning all users';
+        cd /var/cpanel/users
+        for myuser in *; do
+                get_homedir ${myuser}
+                if [ -d "$homedir" ]; then
+                        cd $homedir
+                        echo `pwd`;
+			# shelldb q - calls the known malware db and quarantines it)
+			if [ "$JUSTDB" = "1" ]; then
+				/admin/clamscan justdb q
+			else
+                        	/admin/clamscan faster
+			fi
+                        echo
+                else
+                        echo
+                        echo "$homedir not found";
+                        echo
+                fi
+        done
+else
+        myuser=$1;
+        if [ -f /var/cpanel/users/${myuser} ]; then
+                echo "Working on user ${myuser}";
+                get_homedir ${data}
+                if [ -d "$homedir" ]; then
+                        cd $homedir
+                        echo `pwd`;
+			if [ "$JUSTDB" = "1" ]; then
+                                /admin/clamscan justdb q
+                        else
+                                /admin/clamscan faster
+                        fi
+
+                        echo
+                else
+                        echo "$homedir does not exist";
+                fi
+        elif [ -d $myuser ]; then
+                echo "Found dir $myuser";
+                cd $myuser
+		if [ "$JUSTDB" = "1" ]; then
+                	/admin/clamscan shelldb q
+                else
+                	/admin/clamscan faster
+                fi
+        else
+                echo 'user or dor not found';
+        fi
+fi
+

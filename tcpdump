@@ -1,0 +1,12 @@
+#!/bin/bash
+
+if [ "$*" = "" ]; then
+	echo 'Usage: ./tcpdump string to look for';
+	exit;
+fi
+
+if [ -x /usr/sbin/tcpdump ]; then
+	/usr/sbin/tcpdump -nAs 2048 | grep "$*"
+else
+	echo 'Tcpdump not found at /usr/sbin/tcpdump';
+fi

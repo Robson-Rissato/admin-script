@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+
+# generate a random password
+
+
+DEFAULT_LENGTH=12
+SPECIAL_CHARS='@#()_+'
+
+# Use openssl if available
+if command -v openssl >/dev/null 2>&1; then
+    BASE_PASS=$(openssl rand -base64 48 | tr -dc 'a-zA-Z0-9' | head -c $((DEFAULT_LENGTH-2)))
+else
+    BASE_PASS=$(head -c 64 /dev/urandom | tr -dc 'a-zA-Z0-9' | head -c $((DEFAULT_LENGTH-2)))
+fi
+
+# Pick two random special characters
+SC_FRONT=${SPECIAL_CHARS:RANDOM%${#SPECIAL_CHARS}:1}
+SC_END=${SPECIAL_CHARS:RANDOM%${#SPECIAL_CHARS}:1}
+
+# Final password
+echo "${SC_FRONT}${BASE_PASS}${SC_END}"

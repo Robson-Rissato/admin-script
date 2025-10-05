@@ -1,0 +1,10 @@
+NAME='php';
+VERSION='4.4.6';
+MD5='07c607fcf12435f0078d72fe0de4e3c0';
+EXT='tar.gz';
+DEPS='gcc gcc-c++ patch pcre-devel libtool flex curl-devel libjpeg-devel libpng-devel freetype-devel xorg-x11-devel';
+CONFIG='/admin/getphpconfigline --fcgi > sh && sh sh';
+MAKE='make';
+MAKEINSTALL='make install';
+RPM='lighttpd-1.4.13-1:6272d8310fae8bcc35e6ab4778e2016c:i386'
+FILES='/admin/getphpconfigline';

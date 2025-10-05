@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+
+
+if [ -d /usr/local/directadmin ]; then
+        if [ -e /usr/local/bin/php ]; then
+                check=`ldd /usr/local/bin/php | grep /usr/local/lib | tail -n 1`;
+                if [ "$check" = "" ]; then
+                        echo 'No old libs detected in /usr/local/bin/php';
+                        exit;
+                fi
+        else
+                echo 'Missing /usr/local/bin/php';
+        fi
+fi
+
+if [ "$1" = "" ]; then
+	echo 'Fix is needed';
+	echo 'Enter sleep time in hours (0 for none) ie /admin/storage/fix_da_libs 1 (start in 1 hour)';
+	exit;
+fi
+
+echo "Sleeping for ${1} hours";
+sleep ${1}h
+
+if [ -e /usr/bin/yum ]; then
+        yum -y update
+        if [ $? -eq 0 ]; then
+                echo OK
+        else
+                echo FAIL yum
+                exit;
+        fi
+
+fi
+
+if [ -e /usr/sbin/cagefsctl ]; then
+        cagefsctl --force-update
+        if [ $? -eq 0 ]; then
+                echo OK
+        else
+                echo FAIL cagefs
+                exit;
+        fi
+fi
+
+if [ ! -d /usr/local/lsws ]; then
+ echo "Missing lsws dir";
+ exit;
+fi
+
+echo 'Starting recompile';
+
+da build remove_items
+da build remove_old_local libiconv
+da build litespeed
+da build php
+da build dovecot
+da build exim
+da build all
+
+if [ -x /usr/local/directadmin/custombuild/build ]; then
+        /usr/local/directadmin/custombuild/build roundcube
+
+        if [ -x /admin/storage/config/hooks/mysql/post/roundcubefix.sh ]; then
+                /admin/storage/config/hooks/mysql/post/roundcubefix.sh
+        fi
+fi
+
+if [ -x /admin/configs/upcp ]; then
+        /admin/configs/upcp
+fi

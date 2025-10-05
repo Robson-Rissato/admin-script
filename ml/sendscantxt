@@ -1,0 +1,21 @@
+#!/bin/bash
+
+
+if [ ! -f scan.txt ]; then
+	echo 'no scan.txt file';
+	exit;
+fi
+
+SAVEIFS=$IFS
+IFS=$(echo -en "\n\b")
+
+for file in `cat scan.txt | grep -v .js: | grep /home | cut -d: -f1`; do
+	if [ -f $file ]; then
+        	/admin/ml/send "$file"
+	else
+		echo "$file is not a file";
+	fi
+done
+
+IFS=$SAVEIFS
+

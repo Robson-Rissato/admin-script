@@ -1,0 +1,27 @@
+#!/bin/bash
+
+# add ips from relay.is.cc into greylist bypass and skipsmtphost
+
+if [ -f /admin/configs/relaylist ]; then
+	if [ -f /admin/.info/intrelay ]; then
+		if [ -f /etc/skipsmtpcheckhosts -a -d /usr/local/cpanel ]; then
+			whmapi1 enable_cpgreylist
+			whmapi1 save_cpgreylist_config spf_bypass=1
+                	for ip in `cat /admin/configs/relaylist`; do
+				check=`grep ^${ip}$ /etc/skipsmtpcheckhosts`;
+				if [ "$check" = "" ]; then
+					echo "adding ip $ip to /etc/skipsmtpcheckhosts";
+					echo $ip >> /etc/skipsmtpcheckhosts
+					whmapi1 create_cpgreylist_trusted_host ip=$ip
+				fi
+			done
+			if [ -x /admin/exi ]; then
+				/admin/exi res
+			else
+				/scripts/restartsrv_exim
+			fi
+		fi
+	fi
+fi
+
+

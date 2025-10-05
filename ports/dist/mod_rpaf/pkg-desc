@@ -1,0 +1,11 @@
+# Example
+#Configuration Directives:
+RPAFenable On
+# Enable reverse proxy add forward
+RPAFproxy_ips 66.45.230.53 127.0.0.1
+# which ips are forwarding requests to us
+RPAFsethostname On
+# let rpaf update vhost settings
+# allows to have the same hostnames as in the "real"
+# configuration for the forwarding Apache
+

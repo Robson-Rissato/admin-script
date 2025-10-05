@@ -1,0 +1,31 @@
+#!/bin/sh
+
+# /************************************************************************************\
+# * Trouble Free Admin Center                                                          *
+# * (c)2002 Interserver.net                                                            *
+# * ---------------------------------------------------------------------------------- *
+# * Description: Get contact email on server                                           *
+# \************************************************************************************/
+
+export PATH=/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin
+
+if [ "$1" = "-p" ]; then
+	if [ -e /etc/wwwacct.conf ]; then
+		email="$(cat /etc/wwwacct.conf | grep ^CONTACTPAGER | cut -d" " -f2-)";
+	elif [ -e "/admin/.info/admin.conf" ]; then
+		email="$(cat /admin/.info/admin.conf | grep ^PAGER | cut -d= -f2)";
+	elif [ -e "/admin/.info/.nocontact" ]; then
+		email="";
+	fi	
+else
+	email=root
+	if [ -e "/etc/wwwacct.conf" ]; then
+    		email=$(cat /etc/wwwacct.conf | grep ^CONTACTEMAIL | cut -d" " -f2-);
+	elif [ -e "/admin/.info/admin.conf" ]; then
+    		email="$(cat /admin/.info/admin.conf | grep ^EMAIL | cut -d= -f2)";
+	elif [ -e "/admin/.info/.nocontact" ]; then
+    		email="";
+	fi
+fi
+
+echo $email;

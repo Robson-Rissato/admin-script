@@ -1,0 +1,17 @@
+eAccelerator is a free open-source PHP accelerator, optimizer, encoder and dynamic content cache. It increases the performance of PHP scripts by
+caching them in their compiled state, so that the overhead of compiling is almost completely eliminated. It also optimizes scripts to speed up their
+execution. eAccelerator typically reduces server load and increases the speed of your PHP code by 1-10 times.
+
+eAccelerator was born in December 2004 as a fork of the Turck MMCache project. Turck MMCache was created by Dmitry Stogov and much of the
+eAccelerator code is still based on his work.
+
+eAccelerator stores compiled PHP scripts in shared memory and executes code directly from it. It creates locks only for a short time, while searching
+for a compiled PHP script in the cache, so one script can be executed simultaneously by several engines. Files that can't fit in shared memory are
+cached on disk only.
+
+eAccelerator also contains a PHP encoder and loader. You can encode PHP scripts using encoder.php in order to distribute them without sources.
+Encoded files can be run on any site which runs PHP with eAccelerator. The sources of encoded scripts can't be restored because they are stored in a
+compiled form and the encoded version doesn't contain the source. Of course, some internals of the scripts can be restored with different reverse
+engineering tools (disassemblers, debuggers, etc.), but it is not trivial.
+
+eAccelerator is still under development. The encoder will only work with PHP versions from the 4.x.x branch. All other PHP versions aren't c

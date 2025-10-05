@@ -1,0 +1,23 @@
+#!/bin/bash
+
+function arp()
+{
+ echo "$1"
+ # for freebsd
+ if [ -e /etc/master.passwd ]; then
+ 	arping -S $1 -c5 yahoo.com
+ else
+	arping -I $eth -c 5 -s $1 yahoo.com
+ fi
+}
+
+if [ "$1" = "" ]; then
+	if [ -e /etc/redhat-release ]; then
+		eth=`ifconfig | head -n 1 | cut -d: -f1 | awk '{print $1}'`;
+	fi
+	for i in $(/sbin/ifconfig | grep inet | awk '{ print $2 }' | cut -d: -f2 | grep -v 127.0.0.1); do
+  		arp $i
+ 	done
+else
+ 	arp $1
+fi

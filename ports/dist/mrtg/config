@@ -1,0 +1,9 @@
+#17ae5e4cdd69a8995e3a861f6a00e153  mrtg-2.9.29.tar.gz
+NAME='mrtg';
+VERSION='2.9.29';
+MD5='17ae5e4cdd69a8995e3a861f6a00e153';
+EXT='tar.gz';
+DEPS='gcc gcc-c++ gd-devel';
+CONFIG='./configure --prefix=/usr/local';
+MAKE='make';
+MAKEINSTALL='make install';

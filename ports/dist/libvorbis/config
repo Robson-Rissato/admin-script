@@ -1,0 +1,9 @@
+NAME='libvorbis';
+VERSION='1.1.2';
+MD5='37847626b8e1b53ae79a34714c7b3211';
+EXT='tar.gz';
+DEPS='gcc gcc-c++';
+CONFIG='export LD_LIBRARY_PATH=/usr/local/lib && ./configure';
+MAKE='make';
+MAKEINSTALL='make install';
+LDCONFIG=1

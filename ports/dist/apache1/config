@@ -1,0 +1,10 @@
+# add --enable-module=ssl if you want ssl
+NAME='apache';
+VERSION='1.3.41';
+MD5='f7f00b635243f03a787ca9f4d4c85651';
+EXT='tar.gz';
+DEPS='gcc gcc-c++';
+CONFIG='export CFLAGS=" -DFD_SETSIZE=16384" && export SSL_BASE="/usr" && ./configure --with-layout=Apache --enable-module=so --enable-module=rewrite --enable-module=info --enable-module=expires --enable-module=headers --enable-module=unique_id --enable-suexec --logfiledir=/usr/local/apache/logs --prefix=/usr/local/apache --suexec-caller=nobody --suexec-docroot=/ --suexec-gidmin=100 --suexec-logfile=/usr/local/apache/logs/suexec_log --suexec-uidmin=100 --suexec-userdir=public_html --sysconfdir=/usr/local/apache/conf'
+MAKE='make';
+MAKEINSTALL='make install';
+DIRNAME='apache_1.3.41';

@@ -1,0 +1,11 @@
+#1d019295af1d8d807a323b2d9259c78f  ffmpeg-15024.tgz
+NAME='ffmpeg';
+VERSION='15024';
+MD5='1d019295af1d8d807a323b2d9259c78f';
+EXT='tgz';
+DEPS='gcc gcc-c++ /usr/local/bin/lame:lame';
+CONFIG='export TMPDIR=/root/tmp && ./configure --enable-shared --enable-gpl --prefix=/usr/local';
+MAKE='make';
+MAKEINSTALL='make install';
+DIRNAME='ffmpeg-15024';
+LDCONFIG=1

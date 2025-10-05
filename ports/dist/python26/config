@@ -1,0 +1,9 @@
+#f6c1781f5d73ab7dfa5181f43ea065f6  Python-2.6.8.tgz
+NAME='Python';
+VERSION='2.6.8';
+MD5='f6c1781f5d73ab7dfa5181f43ea065f6';
+EXT='tgz';
+DEPS='gcc gcc-c++ zlib-devel';
+CONFIG='./configure --prefix=/opt/python';
+MAKE='make';
+MAKEINSTALL='make install';

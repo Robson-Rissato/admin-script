@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+
+if [ ! -x /usr/sbin/unbound ]; then
+	exit;
+fi
+
+echo 'Note changes may exist in ubuntu22+ preventing start up TODO';
+
+if [ -d /etc/unbound/unbound.conf.d ]; then
+	if [ -f /etc/unbound/unbound.conf.d/int2.conf ]; then
+		mv -f -v /etc/unbound/unbound.conf.d/int2.conf /etc/unbound/unbound.conf.d/int.conf
+	fi
+
+	if [ -f /etc/unbound/unbound.conf.d/int.conf ]; then
+		if [ -f /admin/configs/int.conf ]; then
+			cp -f /admin/configs/int.conf /etc/unbound/unbound.conf.d/int.conf
+			chown unbound:unbound /etc/unbound/unbound.conf.d/int.conf
+			systemctl restart unbound; systemctl status unbound
+			lsof -i :53
+			echo 'Updated unbound';		
+		fi
+	fi
+fi

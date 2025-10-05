@@ -1,0 +1,41 @@
+#!/bin/sh
+
+mkdir -p /root/tmp
+export TMPDIR=/root/tmp
+
+# run mysqlcheck to find corrupted tables
+
+if [ "$1" = "opt" ]; then
+	ARGS='-o --all-databases --fast --silent';
+elif [ "$1" = "repair" ]; then
+	ARGS='--all-databases --silent --repair';
+else
+	ARGS='--all-databases --fast --silent';
+fi
+
+# start here for additons to args
+# for direct admin we know user is da_admin
+if [ -e /usr/local/directadmin/conf/mysql.conf ]; then
+	pass=`cat /usr/local/directadmin/conf/mysql.conf | grep ^passwd | cut -d= -f2`;
+	if [ "$pass" = "" ]; then
+		echo 'did not get da_admin pass!';
+		exit;
+	else
+		ARGS="$ARGS --user=da_admin --password=$pass";
+	fi
+fi
+
+
+if [ -e /usr/bin/mysqlcheck ]; then
+	/usr/bin/mysqlcheck $ARGS
+elif [ -e "/usr/local/bin/mysqlcheck" ]; then
+	/usr/local/bin/mysqlcheck $ARGS
+elif [ -e "/usr/local/mysql-5.5.9-linux2.6-i686/bin/mysqlcheck" ]; then
+	/usr/local/mysql-5.5.9-linux2.6-i686/bin/mysqlcheck $ARGS
+elif [ -e /usr/local/apps/mysql/bin/mysqlcheck ]; then
+	/usr/local/apps/mysql/bin/mysqlcheck $ARGS
+elif [ -e /usr/local/apps/mysql56/bin/mysqlcheck ]; then
+	/usr/local/apps/mysql56/bin/mysqlcheck $ARGS
+else
+	echo 'Can not fine mysqlcheck';
+fi

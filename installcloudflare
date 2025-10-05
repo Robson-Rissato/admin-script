@@ -1,0 +1,18 @@
+#!/bin/bash
+
+if [ ! -e /etc/redhat-release ]; then
+	exit;
+fi
+
+if [ ! -e /usr/local/cpanel ]; then
+	
+	exit;
+fi
+
+#if [ -e /usr/local/cpanel/bin/cloudflare_update.sh ]; then
+#	echo "Cloudflare already installed";
+#	exit;
+#fi
+
+#bash <(curl -s https://raw.githubusercontent.com/cloudflare/CloudFlare-CPanel/master/cloudflare.install.sh) -k 0eae629706b81e5f66c5a76b10e14d71  -n 'InterServer'
+echo 'Cloudflare has sunsetted the cloudflare plugin and it will reach end of life in 2022';

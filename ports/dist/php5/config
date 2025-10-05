@@ -1,0 +1,11 @@
+NAME='php';
+VERSION='5.2.3';
+MD5='df79b04d63fc4c1ccb6d8ea58a9cf3ac';
+EXT='tar.gz';
+DEPS='gcc gcc-c++ patch';
+CONFIG='/admin/getphpconfigline > sh && sh sh';
+CONFIG1='make clean && /admin/getphpconfigline --/usr > sh && sh sh';
+MAKE='make';
+MAKEINSTALL='make install';
+FILES='/usr/local/bin/php /usr/bin/php /admin/getphpconfigline /usr/local/apache/bin/apxs';
+PATCH='p1:php-5.2.3-mail-header.patch:c48ef565c02a2aeb6aadd3d12cea7bb8';

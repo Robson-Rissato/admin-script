@@ -1,0 +1,17 @@
+#!/bin/bash
+
+if [ -f /root/.swift/_newgw ]; then
+	exit;
+fi
+
+if [ -f /root/.swift/config ]; then
+        /admin/replace-linux https://storage-nj.interserver.net:8080/auth/v1.0 https://storage-nj2.interserver.net/auth/v1.0 -- /root/.swift/config
+	/admin/replace-linux username=\"qs\" username=\"qs:qs\" -- /root/.swift/config
+	if [ -f /etc/lvm/lvm.conf ]; then
+		/admin/replace-linux "snapshot_autoextend_threshold = 100" "snapshot_autoextend_threshold = 80" -- /etc/lvm/lvm.conf
+	fi
+	touch /root/.swift/_newgw
+else
+        echo 'No /root/.swift/config';
+fi
+

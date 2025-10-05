@@ -1,0 +1,8 @@
+NAME='curl';
+VERSION='7.55.1';
+MD5='3b832160a8c9c40075fd71191960307c';
+EXT='tar.gz';
+DEPS='gcc gcc-c++ openssl-devel';
+CONFIG='./configure --prefix=/opt/curl';
+MAKE='make';
+MAKEINSTALL='make install';

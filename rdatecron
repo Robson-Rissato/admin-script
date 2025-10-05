@@ -1,0 +1,39 @@
+#!/usr/bin/perl
+
+if ( -e "/usr/sbin/rdate") {
+	system("ln","-sf","/usr/sbin/rdate","/usr/bin/rdate");
+}
+
+if (! -e "/usr/bin/rdate") {
+	system("/admin/insrpm","rdate");
+}
+
+system("/usr/bin/rdate","-s","rdate.interserver.net");
+system("/bin/date");
+
+$yum = 0;
+@CT=split(/\n/,`crontab -l`);
+foreach $line (@CT) {
+        if ($line =~ /\/usr\/bin\/rdate/) {
+                $yum = 1;
+                quit;
+        }
+}
+if (!$yum) {
+        if (! -d "/root/tmp") {
+                system("mkdir","-p","/root/tmp");
+        }
+        if (-e "/root/tmp/.crontab") {
+                unlink("/root/tmp/.crontab");
+        }
+        @CT=grep(!/\/usr\/bin\/rdate/, @CT);
+        push(@CT,int(rand(60)) . " " . int(rand(6)) . " * * * /usr/bin/rdate -s rdate.interserver.net >/dev/null 2>&1");
+        open(CR,">/root/tmp/.crontab");
+        foreach $line (@CT) {
+                print CR "$line\n";
+        }
+        close(CR);
+        system("crontab","/root/tmp/.crontab");
+        unlink("/root/tmp/.crontab");
+}
+

@@ -1,0 +1,64 @@
+# Last modified 12/12/2024
+# upcp - started to do common updates cpanel needed to run along with upcp like updating the panel
+# now can do directadmin or webuzo or kvm
+
+if [ -x /admin/upscripts ]; then
+        /admin/upscripts
+fi
+
+if [ -d /usr/local/directadmin ]; then
+        if [ -e /admin/storage/upcp ]; then
+                echo 'Detected directadmin';
+                /admin/storage/upcp
+                exit 0;
+        fi
+fi
+
+if [ -d /usr/local/webuzo ]; then
+        if [ -e /admin/webuzo/upcp ]; then
+                echo 'Detected Webuzo';
+                /admin/webuzo/upcp
+        fi
+        exit 0;
+fi
+
+if [ -x /usr/sbin/libvirtd ]; then
+        if [ -d /vz/templates ]; then
+                echo 'Detected KVM';
+                /admin/upgradedebs all
+        fi
+        exit 0;
+fi
+
+if [ ! -d /usr/local/cpanel ]; then
+        echo 'No known system detected';
+        exit;
+fi
+
+if [ -x /usr/bin/kcarectl ]; then
+	/usr/bin/kcarectl -u
+fi
+
+if [ -x /usr/sbin/cagefsctl ]; then
+	if [ -x /usr/bin/yum ]; then
+		yum -y groupinstall alt-php
+		yum -y groupinstall alt-python
+		yum -y groupinstall alt-nodejs
+	fi
+	cagefsctl --enable-all
+	cagefsctl --force-update
+fi
+
+if [ -x /usr/bin/yum ]; then
+	yum -y update
+fi
+
+if [ -x /scripts/check_cpanel_pkgs ]; then
+	/scripts/check_cpanel_pkgs --fix
+fi
+
+if [ -x /scripts/upcp ]; then
+	/scripts/upcp
+fi
+
+

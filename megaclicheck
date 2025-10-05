@@ -1,0 +1,14 @@
+#!/bin/bash
+
+if [ ! -x /usr/bin/megacli ]; then
+	exit;
+fi
+
+if [ -e /root/cpaneldirect/check_raid.sh ]; then
+	/root/cpaneldirect/check_raid.sh
+fi
+
+megacli -LDInfo -Lall -aALL
+megacli -AdpBbuCmd -aAll
+megacli  -PDList -aALL
+

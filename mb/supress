@@ -1,0 +1,100 @@
+#!/usr/bin/env bash
+
+# 4/2/2025
+# ZoneMTA allows basic recipient suppression where messages to specific recipient addresses or domains are silently dropped. Suppressed messages do not 
+# generate bounce messages.
+# Usage: ./supress add|remove|adddomain|removedomain email|domain
+
+
+function verify_email()
+{
+        regex="^[A-Za-z0-9!#\$%&'*+/=?^_\`{|}~-]+(\.[A-Za-z0-9!#$%&'*+/=?^_\`{|}~-]+)*@([A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?\.)+[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?\$"
+        if [[ $1 =~ $regex ]] ; then
+                return 1;
+        else
+                return 0;
+        fi
+}
+
+function verify_domain()
+{
+        regex="^([a-zA-Z0-9](([a-zA-Z0-9-]){0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$"
+        if [[ $1 =~ $regex ]] ; then
+                return 1;
+        else
+                return 0;
+        fi
+}
+
+if [ -d /home/zone ]; then
+
+        if [ ! -x /usr/local/bin/jq ]; then
+                echo 'jq not installed';
+                exit;
+        fi
+
+        if [ "$1" = "" -o "$2" = "" ]; then
+                echo 'Usage: ./supress add|remove|adddomain|removedomain email|domain';
+                exit;
+        fi
+
+        if [ "$1" = "add" ]; then
+                verify_email $2
+                if [ "$?" -eq 1 ]; then
+                        echo 'valid email';
+                        check=`curl http://localhost:12080/suppressionlist | jq | grep $2`;
+                        if [ "$check" = "" ]; then
+                                #https://askubuntu.com/questions/1070864/how-to-set-variable-in-the-curl-command-in-bash
+                                printf -v data '{"address": "%s" }' "$2"
+                                curl -d "$data" -H "Content-Type: application/json" -X POST http://localhost:12080/suppressionlist
+                        else
+                                echo 'Email is already supressed';
+                        fi
+                else
+                        echo 'Invalid email';
+                fi
+        elif [ "$1" = "remove" -o "$1" = "removedomain" ]; then
+                # domain and email is different
+                # this is for a domain
+                if [ "$1" = "remove" ]; then
+                        removecheck=`curl http://localhost:12080/suppressionlist | jq | grep -B 2 $2`;
+                else
+                        removecheck=`curl http://localhost:12080/suppressionlist | jq | grep -B 2 "\"domain\": \"$2\""`;
+                fi
+                echo "$removecheck";
+                rid=`echo $removecheck | grep id | cut -d\" -f4`;
+                if [ "$rid" = "" ]; then
+                        echo 'Email appears to be not blocked';
+                        exit;
+                fi
+                echo -n "got id to remove $rid y/N: ";
+                read wait;
+                if [ "$wait" = "y" ]; then
+                        printf -v data '{"id": "%s" }' "$rid"
+                        #echo $data
+                        curl -d "$data" -H "Content-Type: application/json" -X DELETE http://localhost:12080/suppressionlist
+                else
+                        echo 'bye';
+                fi
+        elif [ "$1" = "adddomain" ]; then
+                verify_domain $2
+                if [ "$?" -eq 1 ]; then
+                        echo 'Valid domain';
+                        check=`curl http://localhost:12080/suppressionlist | jq | grep $2 | grep domain`;
+                        if [ "$check" = "" ]; then
+                                printf -v data '{"domain": "%s" }' "$2"
+                                curl -d "$data" -H "Content-Type: application/json" -X POST http://localhost:12080/suppressionlist
+                        else
+                                echo 'Domain is already supressed';
+                        fi
+                else
+                        echo 'Invalid domain';
+                fi
+        else
+                echo 'Unknown call';
+        fi
+
+else
+        echo "/home/zone does not exist";
+fi
+

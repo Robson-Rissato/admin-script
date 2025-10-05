@@ -1,0 +1,138 @@
+#!/bin/bash
+
+#./wpmd5.sh
+#view optional php
+#replace
+#diff required filename
+
+wpversion=4.7.5;
+checksum='600090b189f320d1b42a1786c2c1a449  wphash.md5';
+MYPATH=$(pwd);
+
+
+if [ -e wphash.md5 ]; then
+        /bin/rm -v wphash.md5
+fi
+curlloc=$(which curl);
+md5loc=$(which md5sum);
+sudo=$(which sudo);
+
+if [ ! -x $curlloc ]; then
+        printf 'can not find curl \n';
+        exit;
+fi
+
+if [ ! -x $md5loc ]; then
+        printf 'can not find md5sum \n';
+        exit;
+fi
+
+if [ ! -x $sudo ]; then
+        printf 'can not find sudo \n';
+        exit;
+fi
+
+
+
+function runmd5()
+{
+        $sudo -u $runas $md5loc --check wphash.md5   2>/dev/null | grep ": FAILED"
+}
+
+function getrunas() {
+        if [ "$1" = "" ]; then
+                echo "Error: getrunas lookup was blank at line $LINENO";
+                exit;
+        fi
+
+        if [ -f $1/wp-config.php ]; then
+                runas=`/bin/ls -ld ${1}/wp-config.php | awk '{print $3}'`;
+                if [ "$runas" = "root" ]; then
+                        echo "Error: Found ownership as user root for $1/wp-config.php at line $LINENO";
+                        exit;
+                elif [ "$runas" = "" ]; then
+                        echo "Error: username came back blank at line $LINENO";
+                        exit;
+                else
+                        echo "Found user $runas";
+                fi
+        else
+                echo "$1/wp-config.php does not exist at line $LINENO";
+                exit;
+        fi
+
+}
+
+getrunas ${MYPATH};
+
+
+$sudo -u $runas $curlloc --connect-timeout 30 -o wphash.md5  http://mirror.trouble-free.net/ml/wp/$wpversion/wordpress/wphash.md5
+
+if [ ! -f wphash.md5 ]; then
+        printf 'failed to download wphash.md5 \n';
+        exit;
+fi
+
+check=$(md5sum wphash.md5);
+if [ "$check" = "$checksum" ]; then
+        printf 'checksum matches \n';
+else
+        printf "got back $check but wanted $checksum \n";
+        /bin/rm -v wphash.md5
+        exit;
+fi
+
+
+
+if [ "$1" = "" ]; then
+        runmd5
+elif [ "$1" = "view" ]; then
+        for file in $(runmd5 | cut -d: -f1); do
+                if [ -f $file ]; then
+                        if [ "$2" = "php" ]; then
+                                isphp=$(file -b $file);
+                                if [[ $isphp == PHP* ]]; then
+                                        #nano $file
+					echo "$file is php";
+                                else
+                                        echo "$file is not php";
+                                fi
+                        else
+                                nano $file
+                        fi
+                fi
+        done
+elif [ "$1" = "replace" ]; then
+        for file in $(runmd5 | cut -d: -f1); do
+                if [ -f $file ]; then
+                        echo "Replacing $file";
+                        $sudo -u $runas $curlloc --connect-timeout 30 -o $file  http://mirror.trouble-free.net/ml/wp/$wpversion/wordpress/$file
+                else
+                        echo '$file does not exist';
+                fi
+        done
+elif [ "$1" = "diff" ]; then
+	if [ "$2" = "" ]; then
+		echo 'Usage diff filename';
+	else
+		if [ -f "$2" ]; then
+			if [ ! -e /tmp/wptmpinspect ]; then
+				$sudo -u $runas $curlloc --connect-timeout 30 -o /tmp/wptmpinspect http://mirror.trouble-free.net/ml/wp/$wpversion/wordpress/$2
+				if [ -e /tmp/wptmpinspect ]; then
+					diff $2 /tmp/wptmpinspect
+					/bin/rm -v /tmp/wptmpinspect
+				else
+					echo "/tmp/wptmpinspect did not download";
+				fi
+			else
+				echo "Error: /tmp/wptmpinspect exists";
+			fi
+		else
+			echo "$2 is not a file";
+		fi
+	fi
+fi
+
+
+/bin/rm -v wphash.md5
+

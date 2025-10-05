@@ -1,0 +1,38 @@
+#!/bin/bash
+
+
+if [ "$1" = "" ]; then
+        echo 'Usage ./rblscan filename';
+        exit;
+fi
+
+if [ ! -x /usr/bin/dig ]; then
+	echo 'Missing /usr/bin/dig';
+	exit;
+fi
+
+myfile="${1}";
+
+if [ ! -f "${myfile}" ]; then
+        echo "${myfile} does not exist"
+        exit;
+fi
+
+if [ ! "$(dig +short 275a021bbfb6489e54d471899f7db9d1663fc695ec2fe2a2c4538aabf651fd0.f.rblscanner.interserver.net)" = "127.0.0.2" ]; then
+        echo 'DNS lookup test has failed';
+        exit;
+fi
+
+
+
+return=$(sha256sum "${myfile}" | awk '{print substr($1,1,63) "." substr($1,64) ".rblscanner.interserver.net" }');
+
+if [[ "$return" =~ ^[A-Fa-f0-9.]{65}.rblscanner.interserver.net$ ]]; then
+        check=$(dig +short $return);
+        if [ "$check" = "" ]; then
+                echo 'NONE';
+        else
+                echo $check;
+        fi
+fi
+

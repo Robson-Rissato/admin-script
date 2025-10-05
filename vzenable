@@ -1,0 +1,240 @@
+#!/usr/bin/env bash
+
+. /admin/includes/common_bash_functions
+
+if [ "$1" = "" -o "$2" = "" ]; then
+	echo 'Usage ./vzenable tun|fuse|loop|ppp|disable|enable|quota|fixyum|listips|blocksmtp|unblocksmtp|inccpanel|lowio|normalio|fixubuntu1104|convert2vswap|validate|w VZID';
+	exit;
+fi
+
+if [ ! -e /usr/sbin/vzctl ]; then
+	echo 'vzctl not found';
+	echo "Run /admin/kvmenable $*";
+	exit;
+fi
+
+if [ ! "$1" = "w" ]; then
+
+	VZID=$2;
+
+	if [ ! -f /etc/vz/conf/$VZID.conf ]; then
+
+		# virtuozzo7 check
+		if [ -f /usr/bin/prlctl ]; then
+			vz7uuid=`prlctl list -i ${VZID} | grep ^EnvID | awk '{print $2}'`;
+			if [[ $vz7uuid =~ ^\{?[A-F0-9a-f]{8}-[A-F0-9a-f]{4}-[A-F0-9a-f]{4}-[A-F0-9a-f]{4}-[A-F0-9a-f]{12}\}?$ ]]; then
+				if [ -L /etc/vz/conf/${vz7uuid}.conf ]; then
+					echo "Found vz7 uuid $vz7uuid";
+					VZID=$vz7uuid;
+				else
+					echo "/etc/vz/conf/${vz7uuid}.conf is not a symlink vzid may not exist";
+					exit;
+				fi
+			else
+				echo "Did not get back uuid in prlctl command";
+				exit;
+			fi
+		else
+			echo $VZID . 'does not exist';
+			exit;
+		fi
+	fi
+fi
+
+function modp {
+	mod=$1;
+	if [ "$mod" = "" ]; then
+		echo 'No module passed';
+		return;
+	fi
+	check=`lsmod | grep $mod`;
+        if [ "$check" = "" ]; then
+               	echo "Loading $mod. It will not reload on boot unless added to rc.local";
+               	modprobe $mod
+	else
+		echo "$mod already loaded"	
+        fi
+}
+
+function smtp {
+	# DROP OR ACCEPT
+	action=$1;
+
+        #CIPS=`cat /etc/vz/conf/$VZID.conf | grep ^IP_ADDRESS= | cut -d\" -f2 | cut -d/ -f1`;
+	CIPS=`grep ^IP_ADDRESS= /etc/vz/conf/${VZID}.conf | cut -d\" -f2  | sed s#"\/255.255.255.0"#""#g`;
+        for CIP in $CIPS; do
+                        echo "Running iptables $action on port 25 465 and 587 for IP $CIP on $VZID";
+			for port in 25 465 587; do
+                        	iptables $1 FORWARD --source $CIP --protocol tcp --destination-port $port -j DROP
+			done
+        done
+}
+
+case "$1" in
+ tun)
+	if [ ! "$3" = "nocheck" ]; then
+		if [ -e /vz/root/$VZID/dev/net/tun ]; then
+			echo $VZID . 'already has /dev/net/tun';
+			echo 'Run with nocheck if you want to skip this';
+			exit;
+		fi
+	fi
+
+	modp tun
+	vzctl set $VZID --devices c:10:200:rw --save
+	vzctl set $VZID --capability net_admin:on --save
+	vzctl exec $VZID mkdir -p /dev/net
+	vzctl exec $VZID mknod /dev/net/tun c 10 200
+	vzctl exec $VZID chmod 600 /dev/net/tun
+	vzctl set $VZID --devnodes net/tun:rw --save
+	vzctl restart $VZID
+
+ ;;
+ 
+
+ loop)
+	echo "Loop may be compiled in";
+	modp loop
+	vzctl set $VZID --devnodes loop0:rw
+ ;;
+
+
+w)
+for i in `vzlist | grep run | awk '{print $1}'`; do
+    printf "%-40s %s" "$i"; 
+    if timeout 20 vzctl exec $i w | head -1 | cut -d " " -f 3- | cut -d "," -f 1,4- | sed -e 's/load/\tload/g' | sed -e 's/,//'; then
+        echo -ne;
+    else
+        echo -e "\033[1;31m20 second timeout exceeded\033[0m";
+    fi;
+done
+;;
+
+ validate)
+ 	echo "Validating config file of $VZID";
+                vzctl set $VZID --tcpsndbuf="unlimited" --save
+                vzctl set $VZID --tcprcvbuf="unlimited" --save
+                vzctl set $VZID --othersockbuf="unlimited" --save
+		vzcfgvalidate -r /etc/vz/conf/$VZID.conf
+ ;;
+
+ fuse)
+	modp fuse
+	vzctl set $VZID --devices c:10:229:rw --save
+        vzctl exec $VZID mknod /dev/fuse c 10 229
+	echo "You may want loo as well";
+ ;;
+ ppp)
+	vzctl stop $VZID
+	modp ppp_async
+	modp ppp_deflate
+	modp ppp_mppe
+	vzctl set $VZID --features ppp:on --save
+	vzctl set $VZID --devices c:108:0:rw --save
+	vzctl exec $VZID mknod /dev/ppp c 108 0
+	vzctl exec $VZID chmod 600 /dev/ppp
+	vzctl start $VZID
+ ;;
+ disable)
+	vzctl stop $VZID
+	vzctl set $VZID --disabled yes --save
+ ;;
+ enable)
+	vzctl start $VZID
+	vzctl set $VZID --disabled no --save
+ ;;
+ quota)
+	vzctl stop $VZID
+	vzctl set $VZID --quotaugidlimit 2000 --save
+	vzctl start $VZID
+ ;;
+ fixyum)
+	if [ ! -e /vz/private/$VZID/etc/redhat-release ]; then
+		echo "$VZID is not centos";
+	else
+		vzctl stop $VZID
+		/bin/rm /vz/private/$VZID/dev/urandom
+		mknod -m 644 /vz/private/$VZID/dev/urandom c 1 9
+		/bin/rm /vz/private/$VZID/lib/udev/devices/urandom
+		mknod --mode 644 /vz/private/$VZID/lib/udev/devices/urandom c 1 9
+		vzctl start $VZID
+	fi
+  ;;
+
+ fixubuntu1104)
+	if [ ! -e /vz/private/$VZID/etc/debian_version ]; then
+
+		echo "$VZID is not ubuntu"
+	else
+		vzctl stop $VZID
+		/sbin/MAKEDEV -d /vz/private/$VZID/dev -x {p,t}ty{a,p}{0,1,2,3,4,5,6,7,8,9,a,b,c,d,e,f} console core full kmem kmsg mem null port ptmx random urandom zero ram0
+		/sbin/MAKEDEV -d /vz/private/$VZID/etc/devices -x {p,t}ty{a,p}{0,1,2,3,4,5,6,7,8,9,a,b,c,d,e,f} console core full kmem kmsg mem null port ptmx random urandom zero ram0
+		vzctl start $VZID
+	fi
+ ;;
+ listips)
+	cat /etc/vz/conf/$VZID.conf | grep ^IP_ADDRESS= | cut -d\" -f2
+ ;;
+
+ blocksmtp)
+	smtp -I
+ ;;
+
+ unblocksmtp)
+	smtp -D
+ ;;
+
+ inccpanel)
+	vzctl set $VZID --privvmpages="116256:117256" --save
+	vzctl set $VZID --numothersock="800" --save
+	vzctl set $VZID --numtcpsock="400" --save
+
+	
+ ;;
+ 
+ lowio)
+	vzctl set $VZID --ioprio 0 --save
+ ;;
+ 
+ normalio)
+ 	vzctl set $VZID --ioprio 4 --save
+ ;;
+ 
+ convert2vswap)
+
+        if [ -e /usr/share/doc/centos-release-5 ]; then
+		kcheck=`uname -r | grep 2.6.32`;
+		if [ "$kcheck" = "" ]; then
+                	echo 'CentOS 5 does not support vswap';
+                	exit;
+		fi
+        fi
+
+        PRIVVMPAGES=`cat /etc/vz/conf/$VZID.conf | grep ^PRIVVMPAGES= | cut -d\" -f2 | cut -d: -f1`;
+	if [ "${PRIVVMPAGES}" = "unlimited" ]; then
+		echo 'VSWAP is likely enabled already';
+		/admin/vzenable validate $VZID
+		exit;	
+	fi
+
+        if [ "${PRIVVMPAGES//[0-9]*}" = "" ]; then
+                RAM=`expr $PRIVVMPAGES / 256`;
+		if [ "$RAM" = "" ]; then
+			echo 'Could not determine ram value';
+			/admin/vzenable validate $VZID
+			exit;
+		fi
+                echo "Setting $VZID to vswap with RAM amount $RAM";
+                vzctl set $VZID --swappages="${RAM}M" --othersockbuf="unlimited" --tcprcvbuf="unlimited" --tcpsndbuf="unlimited" --privvmpages="unlimited" --kmemsize="unlimited" --physpages="${RAM}M" --save
+        else
+                echo 'Did not get a numeric value for privvmpages';
+		/admin/vzenable validate $VZID
+        fi
+	
+
+ ;;
+
+  *)
+        echo 'Unknown directive passed';
+ esac
+

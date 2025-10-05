@@ -1,0 +1,46 @@
+#!/bin/sh
+
+# /************************************************************************************\
+# * Trouble Free Admin Center                                                          *
+# * (c)2002 Interserver.net                                                            *
+# * ---------------------------------------------------------------------------------- *
+# * Description: UnBlock ip address from accessing server                              *
+# \************************************************************************************/
+
+if [ "$1" = "" ]; then
+        echo "Usage ./blockip ip.address"
+        exit;
+fi
+
+check="$(echo $1 | grep .)"
+if [ "$check" = "" ]; then
+	echo "Invalid ip"
+	exit;
+fi
+
+if [ -e /etc/master.passwd ]; then
+	check=`ipfw list | grep $1 | cut -d" " -f1`;
+	if [ "$check" = "" ]; then
+		echo "$1 not blocked";
+		/sbin/route delete -host $1
+	else
+		ipfw delete $check
+		/sbin/route delete -host $1
+	fi
+else
+	check=`iptables -L -n | grep $1`;
+	if [ "$check" = "" ]; then
+                echo "$1 not blocked";
+        else
+		iptables -D INPUT -s $1 -j DROP >/dev/null 2>&1
+		iptables -D OUTPUT -s $1 -j DROP >/dev/null 2>&1
+
+		# if csf exists and is executable run it
+		if [ -x /usr/sbin/csf ]; then
+			check_csf="$(grep ^$1 /etc/csf/csf.deny)"
+			if [ ! "$check_csf" = "" ]; then
+				/usr/sbin/csf -dr $1
+			fi
+		fi
+	fi
+fi

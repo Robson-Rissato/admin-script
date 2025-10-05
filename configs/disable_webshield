@@ -1,0 +1,14 @@
+#!/bin/bash
+
+
+if [ -x /usr/bin/imunify360-agent ]; then
+	if [ "$1" = "" ]; then
+		echo "./usage ./disable_webshield domain";
+		exit 1;
+	fi
+	if [ -f /var/named/$1.db -o -f /etc/bind/$1.db ]; then
+		imunify360-agent whitelist domain add $1
+	else
+		echo 'This domain does not appear to be on the server';
+	fi
+fi

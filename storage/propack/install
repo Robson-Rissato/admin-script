@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+
+if [ ! -d /usr/local/directadmin/custombuild ]; then
+	echo 'Missing /usr/local/directadmin/custombuild';
+	exit;
+fi
+
+if [ -e /usr/sbin/unitd ]; then
+	echo 'Propack already installed';
+	exit;
+fi
+
+if [ ! -x /admin/storage/fixquota ]; then
+	echo 'Missing /admin/storage/fixquota';
+	exit;
+fi
+
+if [ ! -x /usr/local/directadmin/scripts/getLicense.sh ]; then
+	echo 'Missing /usr/local/directadmin/scripts/getLicense.sh';
+	exit;
+fi
+
+if [ ! -x /usr/bin/apt-get ]; then
+	echo '/usr/bin/apt-get missing';
+	exit;
+fi
+
+echo 'Da propack starting in 3 seconds';
+sleep 3s
+
+/usr/local/directadmin/scripts/getLicense.sh auto
+
+# unitd
+cd /usr/local/directadmin/custombuild
+./build set unit yes
+./build unit
+
+#redis
+cd /usr/local/directadmin/custombuild
+./build set redis yes
+./build redis
+
+# composer
+/usr/local/directadmin/custombuild/build composer
+
+# wordpress manager
+/usr/local/directadmin/custombuild/build wp
+
+# git
+apt-get -y install git
+
+# from install docs
+mkdir -p "/etc/systemd/system/user@.service.d"
+echo "[Service]" > "/etc/systemd/system/user@.service.d/delegate.conf"
+echo "Delegate=pids memory cpu io" >> "/etc/systemd/system/user@.service.d/delegate.conf"
+
+
+# rebuild php
+cd /usr/local/directadmin/custombuild
+./build set_php redis yes
+./build php
+
+# packages and fixes
+/admin/storage/fixquota fast
+
+/admin/upgradedebs all

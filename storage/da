@@ -1,0 +1,429 @@
+#!/usr/bin/env bash
+
+# last modified 2/11/2025
+# this script is a catch all for directadmin /admin/storage commands
+# they all symlink to /admin/storage/da - following the busybox model 
+
+# used to get incoming commands
+script=`basename $0`
+
+if [ ! -d /usr/local/directadmin ]; then
+	# a quick  change to use an existing script to show zfs snapshots that are large
+	if [ "$script" = "dusnap" ]; then
+		if [ -x /usr/sbin/zfs -o -x /sbin/zfs ]; then
+			zfs list -t snapshot | egrep "T|G" | grep -v 0B  | rev | cut -d" " -f4- | rev | egrep "T|G"
+			exit;
+		fi
+	fi
+
+	# we otherwise only work on directadmin systems
+	echo 'DA not detected';
+	exit;
+fi
+
+#colors
+if [ "$COLORS" = "" ]; then
+        blue=$(tput setaf 4)
+        green=$(tput setaf 2)
+        cyan=$(tput setaf 6)
+        normal=$(tput sgr0)
+fi
+
+queuefile='/usr/local/directadmin/data/task.queue.cb';
+
+if [ "$script" = "da" ]; then
+        if [ ! "$1" = "" ]; then
+                script=$1;
+                shift;
+        else
+                echo 'Incorrect da call. Commands are:';
+		find /admin/storage -maxdepth 2  -type l | cut -d/ -f4
+                exit;
+        fi
+fi
+
+case "$script" in
+ rundabackup)
+  echo 'This runs admin backup transfer on directadmin same as using run now';
+  echo 'Recommend to run in screen - starting in 5 seconds';
+  sleep 5s;
+  echo "action=backup&id=1" >> /usr/local/directadmin/data/task.queue.cb; /usr/local/directadmin/dataskq d2000 --custombuild
+;;
+ symlink)
+if [ ! -x /usr/bin/sudo ]; then
+	echo 'symlink requires sudo at /usr/bin/sudo';
+fi
+
+if [ "$1" = "" -o "$2" = "" ]; then
+	echo 'Usage ./symlink domain.com user - to fix private_html public_html';
+	exit;
+fi
+
+if [ ! -d /home/$2/domains/${1}/public_html ]; then
+	echo "Did not find /home/${2}/domains/${1}/public_html";
+	exit;
+fi
+
+if [ -d /home/$2/domains/${1}/public_html.old ]; then
+        echo "/home/${2}/domains/${1}/public_html.old already exists";
+        exit;
+fi
+
+
+if [ -L /home/${2}/domains/${1}/private_html ]; then
+	echo "/home/${2}/domains/${1}/private_html is already a symlink will not run";
+	exit;
+fi
+
+if [ -d /home/${2}/domains/${1}/private_html ]; then
+	echo "Found dir /home/${2}/domains/${1}/private_html";
+	mv -v /home/${2}/domains/${1}/private_html /home/${2}/domains/${1}/private_html.old
+	sudo -u ${2} ln -s /home/${2}/domains/${1}/public_html /home/${2}/domains/${1}/private_html
+	echo "action=cache&user=${2}&value=document%5Froot" >> /usr/local/directadmin/data/task.queue.cb; /usr/local/directadmin/dataskq d2000 --custombuild
+else
+	echo "/home/$2/domains/${1}/private_html is not a directory exiting";
+	exit;
+fi
+
+;;
+ suspendacct)
+  echo "Attempting to suspend $1";
+  if [ -d /usr/local/directadmin/data/users/$1 ]; then
+  	/usr/local/directadmin/directadmin --suspend-user --user=$1
+  else
+	echo "$1 does not exist in da data/users";
+  fi
+;;
+ fixauto)
+  if [ "$1" = "" ]; then
+	echo 'Usage ./fixauto username';
+	exit;
+  fi
+  echo "Fixing auto login for $1";
+  if [ -d /usr/local/directadmin/data/users/$1 ]; then
+	if [ -d /usr/local/directadmin/data/users/$1/login_keys ]; then
+		cd /usr/local/directadmin/data/users/$1/login_keys
+		for hashurls in `ls | grep ^HASHURL`; do
+			for hashfiles in key.log.1 key.log key.conf ip.list; do
+				if [ -f ${hashurls}/${hashfiles} ]; then
+					/bin/rm -v ${hashurls}/${hashfiles}
+				fi
+			done
+			rmdir -v ${hashurls}
+		done
+		systemctl restart directadmin
+	fi
+  else
+        echo "$1 does not exist in da data/users";
+  fi
+;;
+ unsuspendacct)
+  echo "Attempting to unsuspend $1";
+  if [ -d /usr/local/directadmin/data/users/$1 ]; then
+        /usr/local/directadmin/directadmin --unsuspend-user user=$1
+  else
+        echo "$1 does not exist in da data/users";
+  fi
+;;
+ rebuild_domain_list)
+  if [ "$1" = "" ]; then
+	echo 'Usage ./rebuild_domain_list username';
+  else
+	if [ -d /usr/local/directadmin/data/users/$1 ]; then
+		echo "action=confirm&type=domains.list&user=$1" >> $queuefile
+        	/usr/local/directadmin/dataskq d2000 --custombuild
+	else
+		echo "$1 user does not exist in data/users";
+	fi
+  fi
+;;
+ updateandfixquota)
+ echo "Running fix quotas this will take some time";
+ echo "action=tally&value=all" >> $queuefile
+ /usr/local/directadmin/dataskq d2000 --custombuild
+;;
+ updateusercache)
+  echo 'Updating show all user cache';
+  echo "action=cache&value=showallusers" >> $queuefile
+  /usr/local/directadmin/dataskq d2000 --custombuild
+;;
+ rebuild_email_quota)
+ if [ "$1" = "" ]; then
+  	echo 'Usage ./rebuild_email_quota domain.com|all';
+ else
+	if [ "$1" = "all" ]; then
+		echo 'Updating all users email quota';
+		echo 'action=cache&type=popquota' >> $queuefile
+	else
+		if [ -d /etc/virtual/$1 ]; then
+			echo "Updating email quota for domain $1";
+			echo "action=cache&type=popquota&value=$1" >> $queuefile
+		else
+			echo "$1 does not appear to be a valid domain on this server";
+			exit;
+		fi
+	fi
+	/usr/local/directadmin/dataskq d2000 --custombuild
+ fi
+;;
+ restorepkg)
+ if [ -d /usr/local/directadmin ]; then
+	adminuser=`/usr/local/directadmin/directadmin admin | head -n 1`;
+	if [ -d /home/${adminuser}/admin_backups ]; then
+		if [ "$1" = "" ]; then
+			echo -n 'restorepkg user (in the working dir ';
+			echo "/home/${adminuser}/admin_backups where user is is the username in a backup (ie user.admin.neonamar.tar.zst)";
+		else
+			if [ -f user.${adminuser}.${1}.tar.zst ]; then
+				echo "action=restore&ip%5Fchoice=file&local%5Fpath=%2Fhome%2F${adminuser}%2Fadmin%5Fbackups&owner=admin&select%30=user%2E${adminuser}%2E${1}%2Etar%2Ezst&type=admin&value=multiple&when=now&where=local" >> $queuefile
+			elif [ -f user.${adminuser}.${1}.tar.gz ]; then
+				echo "action=restore&ip%5Fchoice=file&local%5Fpath=%2Fhome%2F${adminuser}%2Fadmin%5Fbackups&owner=admin&select%30=user%2E${adminuser}%2E${1}%2Etar%2Egz&type=admin&value=multiple&when=now&where=local" >> $queuefile
+			else
+				echo "Did not find user.${adminuser}.${1}.tar.zst or user.${adminuser}.${1}.tar.gz";
+				exit;
+			fi
+			/usr/local/directadmin/dataskq d2000 --custombuild
+		fi
+	else
+		echo "missing /home/${adminuser}/admin_backups";
+	fi
+fi
+;;
+ pkgacct)
+  if [ -d /usr/local/directadmin ]; then
+  	adminuser=`/usr/local/directadmin/directadmin admin | head -n 1`;
+	da config | grep -i skip_  | grep backup | grep -v \=0$
+  	if [ -d /home/${adminuser}/admin_backups ]; then
+		if [ "$1" = "" ]; then
+			# help file
+			echo "./pkgacct ALL|user (r) - add r to backup all resold accounts";
+		elif [ "$1" = "ALL" ]; then
+			echo 'Backing up all accounts';
+			for myuser in `ls /usr/local/directadmin/data/users`; do
+				echo "Running: /usr/local/directadmin/directadmin admin-backup --destination=/home/${adminuser}/admin_backups --user=${myuser}";
+				/usr/local/directadmin/directadmin admin-backup --destination=/home/${adminuser}/admin_backups --user=${myuser}
+			done
+  		elif [ -d /usr/local/directadmin/data/users/$1 ]; then
+			if [ -f /usr/local/directadmin/data/users/$1/users.list ]; then
+				if [ "$2" = "r" ]; then
+					for rbackup in `cat /usr/local/directadmin/data/users/$1/users.list`; do
+						echo "Backing up reseller account ${rbackup} under user $1";
+						/admin/storage/pkgacct ${rbackup}
+					done
+				else
+					echo "$1 is a reseller account - call /admin/storage/pkgacct user r - to package all accounts";
+				fi
+			fi
+			echo "Creating backup of $1";
+			echo "running /usr/local/directadmin/directadmin admin-backup --destination=/home/admin/admin_backups --user=$1";
+			/usr/local/directadmin/directadmin admin-backup --destination=/home/admin/admin_backups --user=$1
+  		else
+			echo "$1 does not exist in da data/users";
+  		fi
+  	else
+		echo "Missing /home/${adminuser}/admin_backups";
+  	fi
+  fi
+;;
+ key)
+  if [ -x /usr/sbin/rdate ]; then
+	rdate rdate.interserver.net
+  elif [ -x /usr/bin/chronyc ]; then
+	chronyc -a 'burst 4/4'
+  else
+	echo 'No method to sync date found. Install chrony or rdate.';
+  fi
+
+  if [ -x /usr/local/directadmin/scripts/getLicense.sh ]; then
+	/usr/local/directadmin/scripts/getLicense.sh auto && systemctl restart directadmin
+  else
+	echo 'Missing /usr/local/directadmin/scripts/getLicense.sh';
+  fi
+;;
+ unblock)
+  if [ "$1" = "" ]; then
+	echo 'Usage ./unblock ipaddress';
+	exit;
+  fi
+
+  if [ -f /usr/local/directadmin/data/admin/ip_blacklist ]; then
+	# load common functions like regex to verify ipv4
+	if [ -f /admin/includes/common_bash_functions ]; then
+        	source /admin/includes/common_bash_functions
+	else
+        	echo 'Missing /admin/includes/common_bash_functions';
+        	exit 1;
+	fi
+
+	check_ip ${1}
+
+        if [ "$?" -eq 1 ]; then
+		check=`grep ^$1= /usr/local/directadmin/data/admin/ip_blacklist`;
+		if [ "$check" = "" ]; then
+			echo "$1 is not blocked";
+		else
+			sed -i "/^$1\=/d" /usr/local/directadmin/data/admin/ip_blacklist
+			echo "$1 unblocked";
+		fi
+	else
+		echo "$1 is not a valid ip";
+	fi
+  else
+  	echo 'Did not find /usr/local/directadmin/data/admin/ip_blacklist';
+  fi
+;;
+ enable)
+  if [ "$2" = "" ]; then
+  	echo 'Usage: ./enable redis|awstats username';
+  else
+  	if [ -f /usr/local/directadmin/data/users/$2/user.conf ]; then
+		# service =
+		if [ "$1" = "awstats" -o "$1" = "redis" ]; then
+			enable_check=`grep -i "^${1}=" /usr/local/directadmin/data/users/$2/user.conf | cut -d= -f2`;
+			if [ "$enable_check" = "OFF" ]; then
+				echo "$1 is disabled";
+			elif [ "$enable_check" = "ON" ]; then
+				echo "$1 is enabled";
+			elif [ "$enable_check" = "" ]; then
+				echo "$1 is not defined for user $2 enabling";
+				echo "redis=ON" >> /usr/local/directadmin/data/users/$2/user.conf
+			else
+				echo "Returned $enable_check checking service $1 for $2";
+			fi
+		else
+			echo 'Unknown call to enable';
+		fi
+
+	else
+		echo "/usr/local/directadmin/data/users/$2/user.conf does not exist";
+	fi
+
+  fi
+;;
+ dusnap)
+ if [ -d /usr/local/directadmin ]; then
+ 	if [ -x /usr/sbin/zfs ]; then
+		zfs list -t snapshot | awk '{print $1 " " $2 }' |  egrep "T$|G$"
+	else
+		echo 'Requires zfs';
+	fi
+ else
+	echo 'Requires directadmin';
+ fi
+;;
+ du)
+ if [ -d /usr/local/directadmin ]; then
+ 	if [ -x /usr/sbin/zfs ]; then
+		echo '/home sort based on disk usage';
+		sleep 1s;
+		# use the sort -Vk2 to sort based on the last field 
+		# however not tested with T since I didn't have anything using tb storage
+		df -h | grep /home | awk '{print $6 " " $3 }' |  egrep "G$|T$" | sort -Vk2
+ 	else
+		du -sm /var/www/html/ /home/admin/ /home/tmp /root /usr/local/jetapps/ /var/log /tmp /usr/local/directadmin/data/tickets /var/lib/mysql	
+ 	fi
+ else
+	echo 'Requires zfs';
+ fi
+;;
+ ftpupdate)
+  if [ ! -f /usr/bin/pure-pw -o ! -f /etc/pureftpd.pdb -o ! -f /etc/proftpd.passwd ]; then
+	echo 'Missing /usr/bin/pure-pw or /etc/pureftpd.pdb or /etc/proftpd.passwd';
+  else
+	/usr/bin/pure-pw mkdb /etc/pureftpd.pdb -f /etc/proftpd.passwd && echo 'ftp passwords updated';
+  fi
+;;
+ debugskq)
+if [ -x /usr/local/directadmin/dataskq ]; then
+  	killall -USR1 dataskq
+	tail -n 10 /var/log/directadmin/errortaskq.log
+fi
+;;
+ rspamstat)
+ if [ -e /var/run/rspamd/rspamd_controller.sock ]; then
+	rspamc -t 30 -h /var/run/rspamd/rspamd_controller.sock stat 
+ else
+	echo 'Missing /var/run/rspamd/rspamd_controller.sock rspamd is not installed';
+ fi
+;;
+ sni)
+  if [ -d /usr/local/directadmin/custombuild ]; then
+	snicheck=`/usr/local/directadmin/directadmin config | grep ^mail_sni| cut -d= -f2`;
+	if [ "$snicheck" = "1" ]; then
+		echo 'Updating sni ssl';
+		echo "action=rewrite&value=snidomains" >> $queuefile
+		echo "action=rewrite&value=mail_sni" >> $queuefile
+		/usr/local/directadmin/dataskq d2000 --custombuild 
+	else
+		echo 'mail_sni is not enabled';
+	fi
+  fi
+;;	
+ upcp)
+  if [ -d /usr/local/directadmin/custombuild ]; then
+	echo "action=update&value=program" >> $queuefile
+	/usr/local/directadmin/dataskq d2000 --custombuild
+	if [ -f /etc/debian_version ]; then
+		if [ -f /admin/upgradedebs ]; then
+			/admin/upgradedebs
+			cd /usr/local/directadmin/custombuild
+			./build update_script; ./build update; ./build update_data; ./build update_webapps; ./build update_versions 
+		fi
+	else
+		if [ -f /etc/redhat-release ]; then
+			# yum updates with cagefs
+			if [ -x /usr/sbin/cagefsctl ]; then
+        			if [ -x /usr/bin/yum ]; then
+					yum -y update alt-python27-cllib
+                			yum -y groupinstall alt-php
+                			yum -y groupinstall alt-python
+                			yum -y groupinstall alt-nodejs
+        			fi
+       				cagefsctl --enable-all
+        			cagefsctl --force-update
+			fi
+
+			# in case there is not cagefs
+			if [ -x /usr/bin/yum ]; then
+				yum -y update
+			fi
+
+			if [ -x /admin/updateda ]; then
+        			/admin/updateda all
+			fi
+		fi
+	fi
+  else
+	echo 'Missing /usr/local/directadmin/custombuild';
+  fi
+;;
+ runlogs)
+  # check /usr/local/directadmin/scripts/awstats_process.sh exists which we need to run logs
+  # /usr/local/directadmin/scripts/awstats_process.sh user domain
+  if [ ! -x /usr/local/directadmin/scripts/awstats_process.sh ]; then
+	echo 'Missing /usr/local/directadmin/scripts/awstats_process.sh';
+	exit;
+  fi
+
+  # call with ./runlogs username
+  if [ "$1" = "" ]; then
+	echo 'Usage ./runlogs $username';
+	exit;
+  else
+	# check domain list in directadmin exists we will be parsing it
+	if [ ! -f /usr/local/directadmin/data/users/$1/domains.list ]; then
+		echo "Missing /usr/local/directadmin/data/users/$1/domains.list";
+		exit;
+	else
+		echo "Working on user $1";
+		for domain in `cat /usr/local/directadmin/data/users/$1/domains.list`; do
+			/usr/local/directadmin/scripts/awstats_process.sh $1 $domain
+		done
+	fi
+  fi
+;;
+  *)
+        echo 'Unknown call';
+  ;;
+ esac
+

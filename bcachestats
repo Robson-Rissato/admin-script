@@ -1,0 +1,7 @@
+#!/bin/bash
+
+if [ -e /dev/bcache0 ]; then
+	tail /sys/block/bcache0/bcache/stats_total/* 
+else
+	echo '/dev/bcache0 does not exist';
+fi

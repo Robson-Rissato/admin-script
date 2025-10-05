@@ -1,0 +1,92 @@
+#!/bin/sh
+
+# /************************************************************************************\
+# * Trouble Free Admin Center                                                          *
+# * (c)2002 Interserver.net                                                            *
+# * ---------------------------------------------------------------------------------- *
+# * Description: Create SSH1 and 2 Keys for TF Admin Center                            *
+# \************************************************************************************/
+
+export PATH=/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin
+
+hostname=`/bin/hostname`;
+if [ "$hostname" = "mirror.trouble-free.net" -o "$hostname" = "nucleus.interserver.net" ]; then
+	exit;
+fi
+
+if [ ! -e /root/.ssh ]; then
+	mkdir /root/.ssh
+	chmod 700 /root/.ssh
+fi
+
+SSH2_TECH=3cc66d388d5de480bce58a119b46cf12;
+
+
+if [ ! -e /root/.ssh ]; then
+	 mkdir /root/.ssh
+ 	chmod 700 /root/.ssh
+fi
+
+if [ ! -e "/admin/.info" ]; then
+ 	mkdir -p /admin/.info
+fi
+
+if [ ! -e "/root/tmp" ]; then
+ 	mkdir -p /root/tmp
+fi
+
+touch /root/.ssh/authorized_keys
+touch /root/.ssh/authorized_keys2
+
+if [ -e /root/tmp/identity.pub ]; then
+	rm /root/tmp/identity.pub
+fi
+
+if [ -e /root/tmp/id_dsa2.pub ]; then
+        rm /root/tmp/id_dsa2.pub
+fi
+
+if [ -e /root/tmp/id_dsa3.pub ]; then
+        rm /root/tmp/id_dsa3.pub
+fi
+
+if [ "$1" = "--force" -o ! -e /admin/.info/SSH2_TECH ]; then
+	# old ssh1 keys
+	cat /root/.ssh/authorized_keys | grep -v "admin@nucleus" | grep -v "tech.trouble-free.net" | grep -v "^ " > /root/.ssh/authorized_keys.new
+	mv -f /root/.ssh/authorized_keys.new /root/.ssh/authorized_keys
+	chmod 600 /root/.ssh/authorized_keys
+
+	# old ssh2 keys
+	cat /root/.ssh/authorized_keys2 | grep -v "admin@nucleus" | grep -v "tech.trouble-free.net" | grep -v "^ " > /root/.ssh/authorized_keys2.new
+	mv -f /root/.ssh/authorized_keys2.new /root/.ssh/authorized_keys2
+	chmod 600 /root/.ssh/authorized_keys2
+
+	echo "Getting SSH2_TECH Key"
+	rsync -a rsync://rsync.is.cc/ssh/id_rsa4.pub /root/tmp
+	if [ -f /etc/master.passwd ]; then
+       	        md52=$(md5 /root/tmp/id_rsa4.pub | awk '{print $4}')
+       	else
+               	md52=$(md5sum /root/tmp/id_rsa4.pub | cut -d" " -f1)
+       	fi
+       	if [ "$SSH2_TECH" = "$md52" ]; then
+               	echo "Installing SSH2_TECH Key"
+               	cat /root/tmp/id_rsa4.pub >> /root/.ssh/authorized_keys2
+               	chmod 600 /root/.ssh/authorized_keys2
+               	if [ -e /admin/.info/.sshnew2 ] ; then
+                       	rm /admin/.info/.sshnew2
+               	fi
+               	touch /admin/.info/SSH2_TECH
+               	rm /root/tmp/id_rsa4.pub
+       	else
+               	echo "SSH2_TECH MD5 Sum Does Not Match"
+       	fi
+	if [ -e /etc/redhat-release ]; then
+		rm /root/.ssh/authorized_keys
+		/bin/ln /root/.ssh/authorized_keys2 /root/.ssh/authorized_keys
+	fi
+else
+        echo "SSH2_TECH key is already installed (use --force)"
+fi
+
+CHECK=`ls -l /root/.ssh/authorized_keys | awk '{print $5}'`;
+echo "Check is $CHECK";

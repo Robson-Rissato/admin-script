@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+
+#print usage message
+if [ "$1" = "" ]; then
+        echo -e "\n\nUsage: \n\t$0 [domainname]\n\n";
+        exit;
+fi
+
+
+#Check that /var/cpanel/users exists
+if [ -d /var/cpanel/users ]; then
+        #To match a specific username for the given domainname
+        if [ "$2" = "match" ]; then
+                #get the username
+                grep -lri "DNS=$1" /var/cpanel/users | cut -d/ -f5
+        else
+                #get the username
+                user=$(grep -lri $1 /var/cpanel/users | cut -d/ -f5)
+                #if the value is not equal to a single match, then print multiple results. Mainly for resellers
+                if [ $(grep -lri $1 /var/cpanel/users | cut -d/ -f5 | wc -l) -ne 1 ]; then
+                        grep -lri $1 /var/cpanel/users | cut -d/ -f5;
+                        exit;
+                fi
+                #print the owner if not root
+                if [ `grep OWNER= /var/cpanel/users/$user | cut -d= -f2` != "root" ]; then
+                        owner=$(cat /var/cpanel/users/$user | grep OWNER= | cut -d= -f2);
+                        contactemail=$(grep CONTACTEMAIL= /var/cpanel/users/$owner | cut -d= -f2);
+                        echo -e "User:\t$user\nOwner:\t$owner\nEmail:\t$contactemail";
+                else
+                        contactemail=$(grep CONTACTEMAIL= /var/cpanel/users/$user | cut -d= -f2);
+                        echo -e "User:\t$user\nEmail:\t$contactemail";
+                fi
+        fi
+
+# if file /var/cpanel/users is not available, check if ploop exists
+elif [ -f /etc/virtual/domainowners ]; then
+        myuser=`grep -i ^$1: /etc/virtual/domainowners | awk '{print $2}'`;
+        # this is a second check for my user the longer check
+        if [ "$myuser" = "" ]; then
+                if [ -f /var/named/${1}.db -o -f /etc/bind/${1}.db ]; then
+                        if [ -d /usr/local/directadmin/data/users ]; then
+                                cd /usr/local/directadmin/data/users
+                                myuser=$(for i in `find | grep domains.list`; do grep -l apkvisit.com $i ; done | cut -d/ -f2 | tail -n 1);
+                        fi
+                fi
+        fi
+
+        # display info
+        if [ ! "$myuser" = "" ]; then
+                echo "$myuser";
+                if [ -f /usr/local/directadmin/data/users/$myuser/user.conf ]; then
+                        grep ^email=  /usr/local/directadmin/data/users/$myuser/user.conf | cut -d= -f2
+                fi
+        fi
+        # needs changes on virtuozzo7
+elif [ -e /etc/vz/conf/ ]; then
+
+        #vz7 follow symlinks
+        vz7='-r';
+
+        #if $1 exists execute prlctl, else don't
+        if [ -f /usr/bin/prlctl ]; then
+                vz7='-R';
+        fi
+
+        if [ "$2" = "match" ]; then
+                grep -li ${vz7} $1\" /etc/vz/conf | grep -v .destroyed$
+        else
+                grep -li ${vz7} $1 /etc/vz/conf | grep -v .destroyed$
+        fi
+else
+        echo 'This needs cpanel, da, openvz or vz7';
+fi
+

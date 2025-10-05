@@ -1,0 +1,9 @@
+#2e91695074dbdfbf1bcec0ada9fda462  nginx-1.8.1.tar.gz
+NAME='nginx';
+VERSION='1.8.1';
+MD5='2e91695074dbdfbf1bcec0ada9fda462';
+EXT='tar.gz';
+DEPS='gcc gcc-c++ pcre-devel zlib-devel';
+CONFIG='./configure --prefix=/usr/local/nginx --with-http_ssl_module --without-mail_pop3_module --without-mail_imap_module --without-mail_smtp_module';
+MAKE='make';
+MAKEINSTALL='make install';

@@ -1,0 +1,17 @@
+#!/bin/sh
+
+if [ -e /etc/master.passwd ]; then
+	eth=`cat /etc/rc.conf | grep ^ifconfig | cut -d_ -f2 | cut -d= -f1 | head -n 1`;
+	/sbin/ifconfig $eth | grep inet | grep -v inet6 | head -n 1 | awk '{print $2 }'
+else
+	if [ -e /etc/wwwacct.conf ]; then
+		eth=`grep ^ETHDEV /etc/wwwacct.conf | cut -d" " -f2`
+	elif [ -e /proc/user_beancounters ]; then
+		eth=venet0:0;
+	fi
+
+	if [ "$eth" = "" ]; then
+		eth=eth0;
+	fi
+	/sbin/ifconfig $eth | grep "inet addr" | cut -d: -f2 | awk '{ print $1 }'
+fi

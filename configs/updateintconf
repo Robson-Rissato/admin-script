@@ -1,0 +1,29 @@
+#!/bin/bash
+
+if [ ! -f /etc/apache2/conf.d/includes/int.conf ]; then
+	exit;
+fi
+
+if [ ! -x /opt/scan.sh ]; then
+	echo 'Needs /opt/scan.sh';
+        exit;
+fi
+
+if [ ! -f /scripts/restartsrv_httpd ]; then
+	echo 'Missing /scripts/restartsrv_httpd';
+	exit;
+fi
+
+wget -O /etc/apache2/conf.d/includes/int.conf.new https://sigs.interserver.net/int.txt
+if [ "$(grep "^#quags$" /etc/apache2/conf.d/includes/int.conf.new)" = "#quags" ]; then
+	mv -f /etc/apache2/conf.d/includes/int.conf.new /etc/apache2/conf.d/includes/int.conf
+	if [ -f /usr/local/lsws/bin/lswsctrl ]; then
+		/usr/local/lsws/bin/lswsctrl restart
+	else
+		/scripts/restartsrv_httpd
+	fi
+else
+	echo '/etc/apache2/conf.d/includes/int.conf.new failed verification';
+	/bin/rm -v /etc/apache2/conf.d/includes/int.conf.new
+fi
+

@@ -1,0 +1,21 @@
+#!/bin/sh
+
+if [ ! -d /usr/local/directadmin ]; then
+	exit;
+fi
+
+if [ -e /usr/lib/dovecot/lib21_fts_xapian_plugin.so ]; then
+        echo 'found lib21_fts_xapian_plugin.so';
+        if [ -f /etc/dovecot/conf.d/90-fts-xapian.conf ]; then
+                echo 'found /etc/dovecot/conf.d/90-fts-xapian.conf';
+                cd /usr/local/directadmin/custombuild
+                rm -f /usr/lib/dovecot/lib21_fts_xapian_plugin*
+                rm -f /etc/dovecot/conf.d/90-fts-xapian.conf
+                ./build dovecot_conf
+	else
+		echo 'FTP does not appear to be enabled';
+        fi
+else
+	echo 'FTS does not appear to be enabled';
+fi
+

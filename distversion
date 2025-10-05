@@ -1,0 +1,23 @@
+#!/bin/sh
+
+if [ -f /etc/whitebox-release ]; then
+	cat /etc/whitebox-release | awk '{print $6 }'
+elif [ -f /etc/enterprise-release ]; then
+	cat /etc/redhat-release | awk '{print $5 }'
+elif [ -e /usr/share/doc/centos-release-3.1 ]; then
+	cat /etc/redhat-release | awk '{print $3 }'
+elif [ -e /usr/share/doc/centos-release-3.3 ]; then
+        cat /etc/redhat-release | awk '{print $3 }'
+elif [ -e /usr/share/doc/centos-release-3 ]; then
+        cat /etc/redhat-release | awk '{print $3 }'
+elif [ -e /usr/share/doc/centos-release-4 ]; then
+	cat /etc/redhat-release | awk '{print $3 }'
+elif [ -f /usr/share/doc/centos-release-5 ]; then
+ 	cat /etc/redhat-release | awk '{print $5 }'
+elif [ -e /usr/share/doc/centos-release-6 ]; then
+	cat /etc/redhat-release  | awk '{print $4}'
+elif [ -e /etc/redhat-release ]; then
+	 cat /etc/redhat-release  | awk '{print $3}'
+else
+ 	echo "Error: unkown dist"
+fi

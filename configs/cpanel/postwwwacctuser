@@ -1,0 +1,20 @@
+#!/bin/bash
+
+if [ -f /admin/configs/postconfig ]; then
+        source /admin/configs/postconfig
+else
+        PHP_VERSION=7.2;
+fi
+
+if [ -e /usr/sbin/cagefsctl ]; then
+        /usr/sbin/cagefsctl --enable $1 >/dev/null 2>&1
+fi
+
+if [ -e /usr/bin/selectorctl ]; then
+        /usr/bin/selectorctl --set-user-current=${PHP_VERSION} --user=$1 >/dev/null 2>&1
+        /usr/bin/selectorctl --enable-user-extensions=mcrypt,timezonedb,opcache  --version=${PHP_VERSION} --user=$1 >/dev/null 2>&1
+fi
+
+if [ -x /scripts/restartsrv_pdns ]; then
+	/scripts/restartsrv_pdns
+fi

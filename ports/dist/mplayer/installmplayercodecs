@@ -1,0 +1,30 @@
+#!/bin/bash
+
+#4ea9c2dbd0945c83af1a8d0dd363993c  essential-20071007.tar.bz2
+
+MYDIR=`pwd`;
+DIR='/usr/local/lib/codecs';
+VERSION='20071007';
+MD5='4ea9c2dbd0945c83af1a8d0dd363993c';
+
+if [ -e /root/tmp/essential-$VERSION.tar.bz2 ]; then
+	/bin/rm /root/tmp/essential-$VERSION.tar.bz2
+fi
+
+cd /root/tmp
+
+/admin/getpackage /sources/essential-$VERSION.tar.bz2
+check=`/admin/checkmd5 $MD5 essential-$VERSION.tar.bz2`;
+if [ "$check" = "0" ]; then
+	mkdir -p /usr/local/lib/codecs
+	tar -jxvf /root/tmp/essential-$VERSION.tar.bz2
+	mv -f /root/tmp/essential-$VERSION/* $DIR
+	chmod -R 755 $DIR
+else
+	echo "$check =! $MD5";
+fi
+
+/bin/rm /root/tmp/essential-$VERSION.tar.bz2
+/bin/rmdir /root/tmp/essential-$VERSION
+
+cd $MYDIR

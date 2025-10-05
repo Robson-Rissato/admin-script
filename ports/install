@@ -1,0 +1,383 @@
+#!/bin/sh
+
+ #-
+ # Copyright (c) 2006 InterServer, Inc.
+ # All rights reserved.
+ #
+ # Redistribution and use in source and binary forms, with or without
+ # modification, are permitted provided that the following conditions
+ # are met:
+ # 1. Redistributions of source code must retain the above copyright
+ #    notice, this list of conditions and the following disclaimer.
+ # 2. Redistributions in binary form must reproduce the above copyright
+ #    notice, this list of conditions and the following disclaimer in the
+ #    documentation and/or other materials provided with the distribution.
+ # 3. All advertising materials mentioning features or use of this software
+ #    must display the following acknowledgement:
+ #        This product includes software developed by InterServer, Inc and
+ #        its contributors.
+ # 4. Neither the name of InterServer, Inc nor the names of its
+ #    contributors may be used to endorse or promote products derived
+ #    from this software without specific prior written permission.
+ #
+ # THIS SOFTWARE IS PROVIDED BY INTERSERVER, INC. AND CONTRIBUTORS
+ # ``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
+ # TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ # PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE COMPANY OR CONTRIBUTORS
+ # BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ # CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ # SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ # INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ # CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ # ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ # POSSIBILITY OF SUCH DAMAGE.
+ #/
+
+
+# Version 0.2
+
+# This is my attempt to create an easy to use way to install an maintain software installed on a server
+# My /admin scripts directory has been filling up with software for installation. In most cases they
+# are beginning to use the same code over and over
+
+# Since I perfer Linux over FreeBSD for the time being, but do like the freebsd ports sytems this will be
+# based on the ideas from the ports system.
+
+# The basics for the software are as follows:
+
+# config files for each software package that have the information required for the software install (md5's, package names, etc)
+# most software will install into /usr/local directories
+
+# this to implement in the near future
+# 1) additional mirrors
+# 2) a way to to keep track of what is installed
+# 3) add a list of allowed commands (dissallow everything else)
+
+
+DEBUG=1;
+WORKDIR=`pwd`;
+# this will use /$DISTFILES/tmp
+DISTFILES='root';
+
+# this will eventually have additional switches for other usages
+if [ "$1" = "" ]; then
+	echo 'Usage ./install filename';
+	exit;
+fi
+
+# currently we are placing config in the same directory
+# include the config
+if [ -f dist/$1/config ]; then
+	source dist/$1/config
+else
+	echo "$1 not found";
+	exit;
+fi
+
+if [ "$DEBUG" = "1" ]; then
+	echo 'Found the following:';
+	echo $NAME
+	echo $VERSION
+	echo $MD5
+	echo $EXT
+	echo $DEPS
+	echo $CONFIG
+	echo $MAKE
+	echo $MAKEINSTALL
+	echo $FILES
+	echo $DIRNAME
+	echo $PRE
+	echo $RPM
+fi
+
+
+
+# dependencies
+# I am writing this for centos servers. We will use yum for this, however it will be open to add in other systems.
+
+if [ -e /etc/redhat-release ]; then
+	if [ -e /usr/bin/yum ]; then
+		if [ "$DEBUG" = "1" ]; then
+			echo "I will install $DEPS with yum";
+		fi
+		# yum -C (caching only) does not seem to work in all locations
+		if [ ! "$2" = "--nodeps" ]; then
+			/usr/bin/yum -y install $DEPS
+		fi
+	else
+		echo 'Yum is not found. I can not continue.';
+		exit;
+	fi
+else
+	echo 'Your OS is not supported at this time.';
+	exit;
+fi
+
+# file dependencies
+# FIX ME - if we can install from ports, rerun this function
+if [ ! "$FILES" = "" ]; then
+	for fileandport in $FILES; do
+		file=`echo $fileandport | cut -d: -f1`;
+		andport=`echo $fileandport | cut -d: -f2`;
+		if [ -e $file ]; then
+			echo "Found dependency $file ;-)";
+		else
+			if [ "$andport" = "" ]; then
+				echo "Unable to fine dependency $file, Please install this.";
+				exit 1;
+			else
+				echo "Unable to fine dependency $file, but I can install from ports."
+				echo "Will install $andport in 2 seconds";
+				sleep 2s;
+				/admin/ports/install $andport --nodeps
+			fi
+		fi
+	done
+fi
+
+
+# functions we will use
+
+function configure()
+{
+        if [ "$DEBUG" = "1" ]; then
+                echo "Running $RUNCONFIG";
+                sleep 2s;
+        fi
+        eval $RUNCONFIG
+        if [ "$DEBUG" = "1" ]; then
+		if [ "$MAKE" = "" ]; then
+			echo "Nothing to do for MAKE";
+		else
+                	echo "Running $MAKE";
+		fi
+                sleep 2s;
+        fi
+        eval $MAKE
+        if [ "$DEBUG" = "1" ]; then
+		if [ "$MAKEINSTALL" = "" ]; then
+			echo "Nothing to do for MAKEINSTALL";
+		else
+                	echo "Running $MAKEINSTALL";
+		fi
+                sleep 2s;
+        fi
+	IFS=""
+        eval $MAKEINSTALL
+}
+
+function cleanup()
+{
+	if [ "$DIRNAME" = "" ]; then
+		DIRNAME="$NAME-$VERSION";
+	fi
+        if [ -e /$DISTFILES/tmp/$DIRNAME.$EXT ]; then
+                cd /$DISTFILES/tmp
+		if [ "$DEBUG" = "1" ]; then
+			echo "Cleanup $DIRNAME.$EXT";
+		fi
+                rm -f $DIRNAME.$EXT
+        fi
+
+        if [ -d /$DISTFILES/tmp/$DIRNAME ]; then
+                cd /$DISTFILES/tmp
+		if [ "$DEBUG" = "1" ]; then
+                        echo "Cleanup $DIRNAME";
+                fi
+                rm -rf $DIRNAME
+        fi
+}
+
+# patch function
+function codepatch()
+{
+	for patches in `declare | grep ^PATCH | cut -d= -f2 | cut -d\' -f2 | sort -n`; do
+		if [ "$patches" = "" ]; then
+			echo 'No patches found. We have encountered an error that should not have happened.';
+			return;
+		else
+			# get all patch data
+			ppatch=`echo $patches | cut -d: -f1`;
+			patchname=`echo $patches | cut -d: -f2`;
+			patchmd5=`echo $patches | cut -d: -f3`;
+			echo "Found Patch $patchname";
+			# get source if we don't exist
+			if [ ! -e /$DISTFILES/tmp/$patchname ]; then
+				/admin/getpackage /sources/$patchname --verbose
+			fi
+			# FIX ME - move md5 checks to a function in code
+			check=`/admin/checkmd5 $patchmd5 $patchname`;
+			if [ "$check" = "0" ]; then
+				echo "$patchname MD5 ok ;-)";
+				patch -$ppatch < /$DISTFILES/tmp/$patchname --directory=/$DISTFILES/tmp/$DIRNAME
+			else
+				echo 'Error MD5 does not match';
+				cd $WORKDIR;
+				cleanup;
+				exit 1;
+			fi
+		fi
+	done	
+	return;
+}
+
+
+# get package
+# This program will be reliant on the /admin directory
+/admin/getpackage /sources/$NAME-$VERSION.$EXT --verbose
+
+if [ "$DEBUG" = "1" ]; then
+	echo "Got $NAME-$VERSION.$EXT";
+fi
+
+# check md5 and install
+check=`/admin/checkmd5 $MD5 $NAME-$VERSION.$EXT`;
+if [ "$check" = "0" ]; then
+	# clean up on exit signal
+	trap "{ cleanup; exit; }" EXIT
+	echo "Will install $NAME version $VERSION (md5sum $MD5 matches!)";
+	
+	if [ ! -d /$DISTFILES ]; then
+		echo "$DISTFILES does not exist. You need to create it to continue.";
+		exit
+	fi
+
+	cd /$DISTFILES/tmp
+
+	# variable we will use to see if we will go with the install
+	# we'll verify some of the inputs and then set this to 1
+	GO=0;
+
+	# we can do bz2 and gz for now
+	# FIX ME - clean this up
+	if [ "$EXT" = "tar.bz2" ]; then
+		tar -jxvf $NAME-$VERSION.$EXT
+	elif [ "$EXT" = "tar.gz" -o "$EXT" = "tgz" ]; then
+		tar -zxvf $NAME-$VERSION.$EXT
+	else
+		echo 'Unknown suffix';
+		cleanup;
+		exit;
+	fi
+
+	if [ "$DIRNAME" = "" ]; then	
+		DIRNAME="$NAME-$VERSION";
+	fi
+
+	if [ -d $DIRNAME ]; then
+		GO=1;
+	else
+		echo 'Archive did not extract correctly.';
+		cleanup;
+		exit;
+	fi	
+	if [ "$GO" = "1" ]; then
+		# We have an RPM to install first
+		# php-fcgi uses lighttpd rpm (as example)
+		# lighttpd-1.4.13-1.i386.rpm
+		# FIX ME - RPM src removals should be moved to 1 function
+		if [ ! "$RPM" = "" ]; then
+			# we need rpmbuild to continue (we could install through yum)
+			if [ -e /usr/bin/rpmbuild ]; then
+				# grab information from config in memory
+				RPM_NAME=`echo $RPM | cut -d: -f1`;
+				RPM_MD5=`echo $RPM | cut -d: -f2`;
+				RPM_LOC=`echo $RPM | cut -d: -f3`;
+
+				# download rpm
+				echo "Found RPM called $RPM_NAME, downloading...";
+				/admin/getpackage /sources/rpms/$RPM_NAME.src.rpm --verbose
+
+				# check the checksum
+				rpmcheck=`/admin/checkmd5 $MD5 $NAME-$VERSION.$EXT`;
+				if [ "$rpmcheck" = "0" ]; then
+					echo "$RPM_NAME md5 matches ;-)";
+
+					#  build rpm - eventually move to own function
+					rpmbuild --rebuild /root/tmp/$RPM_NAME.src.rpm
+					if [ -e /usr/src/redhat/RPMS/$RPM_LOC/$RPM_NAME.$RPM_LOC.rpm ]; then
+						rpm -U /usr/src/redhat/RPMS/$RPM_LOC/$RPM_NAME.$RPM_LOC.rpm
+					else
+						echo "$RPM_NAME seems to have error'd out in build, exiting";
+						/bin/rm -v /root/tmp/$RPM_NAME.src.rpm
+						cleanup;
+                                        	exit;
+					fi
+					/bin/rm -v /root/tmp/$RPM_NAME.src.rpm
+				else
+					echo "$RPM_NAME md5 sum did not match";
+					/bin/rm -v /root/tmp/$RPM_NAME.src.rpm
+					cleanup;
+					exit;
+				fi
+
+			else
+				echo 'You need RPMBUILD installed to continue';
+				cleanup;
+				exit;
+			fi
+		fi
+
+		if [ ! "$PATCH" = "" ]; then
+			echo 'Found patch files';
+			codepatch;
+		fi
+
+		# change to source directory
+	        if [ "$DEBUG" = "1" ]; then
+	                echo "Changing to $DIRNAME directory";
+        	        sleep 2s;
+        	fi
+		cd $DIRNAME
+
+		# pre-install script, may not be needed
+		if [ ! "$PRE" = "" ]; then
+			if [ -x /admin/ports/dist/$1/$PRE ]; then
+				if [ "$DEBUG" = "1" ]; then
+					echo "Running Pre Install Script $PRE";
+					sleep 2s;
+				fi
+				eval /admin/ports/dist/$1/$PRE
+			fi
+		fi
+		if [ "$CONFIG1" = "" ]; then
+			export RUNCONFIG="$CONFIG";
+			configure;
+		else
+			OLDIFS=$IFS;
+			IFS="
+"
+			for CONFIGS in `declare | grep ^CONFIG | cut -d= -f2 | cut -d\' -f2`; do
+				if [ "$DEBUG" = "1" ]; then
+					echo "Found configure line $CONFIGS";
+				fi
+				export RUNCONFIG="$CONFIGS";
+				configure;
+			done
+		fi
+
+
+
+		if [ "$LDCONFIG" = "1" ]; then
+			if [ "$DEBUG" = "1" ]; then
+				echo 'Running ldconfig';
+			fi
+			/sbin/ldconfig
+		fi
+		# show info if available
+		if [ -f /admin/ports/dist/$1/pkg-info ]; then
+			echo
+			cat /admin/ports/dist/$1/pkg-info
+		fi
+	fi
+else
+	echo "MD5 does not match";
+	cleanup;
+fi
+
+cleanup;
+# this is probably no longer needed
+cd $WORKDIR
+
+#
+trap - TERM

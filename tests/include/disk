@@ -1,0 +1,198 @@
+#!/usr/bin/env bash
+
+if [ -f /admin/includes/common_bash_functions ]; then
+        source /admin/includes/common_bash_functions
+fi
+
+
+if [ -x /usr/sbin/zpool -o -x /sbin/zpool ]; then
+	if [ -e /usr/bin/lspci ]; then
+		raidcheck=`lspci  | egrep "(RAID bus|Hewlett-Packard Company Smart Array)"`;
+		if [ ! "$raidcheck" = "" ]; then
+			echo " * ${cyan} WARNING ${normal}         detected raid card - verify zfs is not passing through raid card";
+			echo $raidcheck;
+			dosleep;
+		fi
+	fi
+
+	zcheck=`zpool list -H -p -o health`;
+	if [ "$zcheck" = "SUSPENDED" ]; then
+		echo " * ${cyan} WARNING ${normal} MAJOR ERROR POOL IS SUSPENDED";
+		dosleep;
+	fi
+
+       	printf "%-40s%s" "Checking ZFS storage space..." "";
+       	for z in `zpool list -H -p -o name`; do
+              	cap=`zpool list -H -p -o capacity $z`;
+                if [ "$cap" -gt "79" ]; then
+                        echo -e " * WARNING"
+                        printf "%-47s\n" "-" | sed 's/\s/-/g'
+                        echo "Pool $z is at $cap usage";
+                        echo 'Recommended to keep usage below 80%';
+                        if [ -d /usr/local/directadmin ]; then
+                                echo 'Need to reduce?';
+                                echo -e "\t${green}/admin/storage/clean_system.sh run m${normal}";
+                                echo 'Or see disk space usage with';
+                                echo -e "\t${green}/admin/storage/du${normal}";
+                                printf "%-47s\n" "-" | sed 's/\s/-/g'
+                                echo
+                        fi
+			dosleep;
+                else
+                        echo "OK"
+                fi
+        done
+
+        printf "%-40s%s" "Checking ZFS health..." "";
+        health=`zpool status -x`;
+        if [ ! "$health" = "all pools are healthy" ]; then
+                echo " * WARNING";
+                printf "%-47s\n" "-" | sed 's/\s/-/g';
+                echo -e "Please check zpool status\n";
+                zpool status | grep -A50 NAME | grep -v errors | awk 'NR > 2' | awk -F' ' '{print $1, $2, $6}' | awk -F' ' '{printf "    %-45s %s %s\n", $1, $2, $3}';
+                printf "%-47s\n" "-" | sed 's/\s/-/g'
+		dosleep;
+        else
+                        echo -e "OK\n\n"
+        fi
+
+	scrub=`zpool  status | grep "scrub in progress since"`;
+	if [ ! "$scrub" = "" ]; then
+		echo " * ${cyan} WARNING ${normal}         zfs scrub in progress so load may be higher than normal";
+		dosleep;
+	fi
+
+	# skip check on freebsd
+	if [ ! -f /etc/master.passwd ]; then
+        	huge=`sysctl vm.nr_hugepages | awk '{print $3}'`;
+        	if [ ! "$huge" = "0" ]; then
+                	echo 'Transparent hugepages are enabled';
+                	echo "  ${green}sysctl -w vm.nr_hugepages=0${normal}"
+                	echo -e "may improve performance on zfs\n";
+        	fi
+
+        	hugepage=`cat /sys/kernel/mm/transparent_hugepage/enabled | awk '{print $3}'`;
+        	if [ ! "$hugepage" = "[never]" ]; then
+               		echo 'Setting /sys/kernel/mm/transparent_hugepage/enabled to never may improve performance on zfs';
+                	echo -e "  ${green}echo never > /sys/kernel/mm/transparent_hugepage/enabled${normal}\n";
+        	fi
+	fi
+
+	printf "%-40s%s" "Checking for large snapshots..." "";
+	echo
+	# list zfs snapshots showing only things more than 100GB (or T for terabyte)
+	zfs list -H -t snapshot | awk '{print $1 " " $2}' | egrep "([0-9]{3,4}G$|T$)" | sort
+	echo 'You can rerun this check with: /admin/tests/include/disk';
+	dosleep;
+
+	slogcheck=`zpool status | grep -i logs`;
+	if [ "$slogcheck" = "" ]; then
+		echo " * ${cyan} WARNING ${normal}         No slog device detected";
+		dosleep;		
+	fi
+
+	if [ -d /root/cpaneldirect -a -d /scripts ]; then
+		mount | awk '{if ($3 == "/vz") { exit 0}} ENDFILE{exit -1}'
+		vzreturn=$?;
+		if [ "$vzreturn" = "255" ]; then
+			echo " * ${cyan} WARNING ${normal}         /vz is NOT MOUNTED";
+			dosleep;
+		elif [ "$vzreturn" = "0" ]; then
+			echo "${green}GOOD /vz is mounted${normal}";
+			echo
+
+		else
+			echo " * ${cyan} WARNING ${normal}         could not determine if /vz is mounted";
+			dosleep;
+		fi
+	fi	
+fi
+#end zfs
+
+#
+# / space over 80% warn
+#
+if [ -f /etc/master.passwd ]; then
+	du_check=`df -H  -l / | grep /$ | awk '{print $5}' | tail -n 1 | cut -d"%" -f1`;
+else
+	du_check=`df --output=pcent / | tail -n 1 | awk  '{print $1}' | cut -d"%" -f1`;
+fi
+
+if [ "$du_check" -gt "80" ]; then
+        echo -e '\nWARNING: / space is at '$du_check' and we recommend to keep it below 80%';
+        echo 'Check folders like ';
+        echo "${green}/tmp${normal} and ${green}/var/www/html${normal}";
+
+	if [ -d /var/lib/mysql.old ]; then
+		echo "${green}/var/lib/mysql.old${normal} also exists";
+	fi
+
+	dosleep;
+fi
+
+#inodes
+if [ ! -f /etc/master.passwd ]; then
+	#boot efi does not have inodes
+	for inodes in `df -i | grep -v boot/efi | grep -v snap | grep -v vz/ | awk '{print $5}' | cut -d% -f1 | grep -v ^IUse`; do 
+		if [ "$inodes" -gt "90" ]; then 
+			echo " * ${cyan} WARNING ${normal} inode usage is high" && df -i 
+			dosleep;
+		fi 
+	done
+fi
+
+#hangs on some systems
+#big files in /home
+if [ ! -f /etc/master.passwd ]; then
+	if [ -d /home ]; then
+		echo 'Checking for large files in /home';
+		find /home -maxdepth 1 -type f | xargs --no-run-if-empty du -h
+		dosleep;
+	fi
+fi
+
+if [ -x /usr/sbin/vzctl ]; then
+        vz_check=`df --output=pcent /vz | tail -n 1 | awk  '{print $1}' | cut -d"%" -f1`;
+        if [ "$vz_check" -gt "95" ]; then
+                echo " * ${cyan} WARNING ${normal}         /vz is using more than 95% space";
+                echo;
+        fi
+fi
+
+#qvo shit drives check
+if [ -e /proc/bus ]; then
+	if [ -d /root/cpaneldirect ]; then
+		if [ -x /admin/assettemplate ]; then
+			qvo=`( /admin/assettemplate | grep -i QVO ) 2>/dev/null`;
+			if [ ! "$qvo" = "" ]; then
+				echo " * ${cyan} !! WARNING !! ${normal} This system has at least one QVO drive";
+				printf "${qvo}";
+				dosleep;
+			fi
+		fi
+	fi
+else
+	echo 'Skipping qvo check as /proc/bus is missing (openvz likely)';
+fi
+
+if [ -f /var/log/messages ]; then
+	pastdiskfull=`grep "No space left on device" /var/log/messages | tail -n 2`;
+	if [ ! "$pastdiskfull" = "" ]; then
+                echo " * ${cyan} !! WARNING !! ${normal} The system ran out of disk space in the past";
+		printf "${pastdiskfull}";
+		dosleep;
+	fi
+fi
+
+#done
+
+if [ -f /home/PURGABLE/largefile1 -o -f /home/PURGABLE/largefile2 ]; then
+	echo "NOTE: /home/PURGABLE/largefile1 or /home/PURGABLE/largefile2 exists as a removable large file to free up space";
+	dosleep;
+fi
+
+if [ -x /admin/benchmark ]; then
+	echo 'To run further disk and hardware checks you can run';
+	echo '/admin/benchmark';
+	sleep 1;
+fi

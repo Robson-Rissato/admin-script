@@ -1,0 +1,82 @@
+#!/bin/bash
+
+if [ ! -d /usr/local/cpanel ]; then
+	echo 'Requires cpanel';
+	exit;
+fi
+if [ -e /admin/upscripts ]; then
+        /admin/upscripts
+fi
+if [ ! -e /usr/local/cpanel//3rdparty/bin/clamd ]; then
+        if [ -f /admin/installcpanelclamav ]; then
+                /admin/installcpanelclamav
+        fi
+fi
+
+if [ -f /etc/apache2/conf.d/modsec_vendor_configs/OWASP3/crs-setup.conf ]; then
+        if [ ! -f /etc/apache2/conf.d/includes/int.conf ]; then
+                wget -O /etc/apache2/conf.d/includes/int.conf https://sigs.interserver.net/int.txt
+        fi
+
+        if [ ! -e /opt/scan.sh ]; then
+                cp /admin/ml/scan.sh /opt/scan.sh
+        else
+                cp -u -f /admin/ml/scan.sh /opt/scan.sh
+        fi
+        chown nobody:nobody /opt/scan.sh
+        touch /tmp/scanner.log
+        chown nobody:nobody /tmp/scanner.log
+
+        if [ ! -e /etc/apache2/conf.d/modsec/99_int_scanner.conf  ]; then
+                cp /admin/99_int_scanner.conf /etc/apache2/conf.d/modsec/99_int_scanner.conf
+        else
+                cp -u -f /admin/99_int_scanner.conf /etc/apache2/conf.d/modsec/99_int_scanner.conf
+        fi
+
+        if [ -f /etc/apache2/conf.d/includes/pre_main_global.conf ]; then
+                intcheck=`grep /int.conf$ /etc/apache2/conf.d/includes/pre_main_global.conf`;
+                if [ "$intcheck" = "" ]; then
+                        echo "Include /etc/apache2/conf.d/includes/int.conf" >> /etc/apache2/conf.d/includes/pre_main_global.conf
+                        echo 'Adding /etc/apache2/conf.d/includes/int.conf to /etc/apache2/conf.d/includes/pre_main_global.conf ';
+                fi
+        fi
+
+	if [ ! -f /etc/apache2/conf.d/modsec/00_whitelist.conf ]; then
+		if [ -f /admin/configs/00_whitelist.conf ]; then
+			cp /admin/configs/00_whitelist.conf /etc/apache2/conf.d/modsec/00_whitelist.conf
+			wlcheck=`grep /00_whitelist.conf$ /etc/apache2/conf.d/modsec/modsec2.user.conf`;
+			echo "Include /etc/apache2/conf.d/modsec/00_whitelist.conf" >> /etc/apache2/conf.d/modsec/modsec2.user.conf
+			echo 'Addning /etc/apache2/conf.d/modsec/00_whitelist.conf to /etc/apache2/conf.d/modsec/modsec2.user.conf';
+			mkdir -p /etc/asl
+			touch /etc/asl/whitelist
+		else
+			echo 'Can not add 00_whitelist.conf';
+		fi
+	fi
+
+        if [ -f /etc/apache2/conf.d/modsec/modsec2.user.conf ]; then
+                modseccheck=`grep /99_int_scanner.conf$ /etc/apache2/conf.d/modsec/modsec2.user.conf`;
+                if [ "$modseccheck" = "" ]; then
+                        echo "Include /etc/apache2/conf.d/modsec/99_int_scanner.conf" >> /etc/apache2/conf.d/modsec/modsec2.user.conf
+                        echo 'Adding /etc/apache2/conf.d/modsec/99_int_scanner.conf to /etc/apache2/conf.d/modsec/modsec2.user.conf';
+                fi
+        fi
+
+
+
+        if [ -e /usr/sbin/csf ]; then
+                if [ -f /admin/ml/intcsf ]; then
+                        /admin/ml/intcsf
+                fi
+        fi
+
+        if [ -f /admin/configs/updateintconf ]; then
+                /admin/configs/updateintconf
+        fi
+
+	if [ -f /admin/modsecurity/buildaslwhitelist.sh ]; then
+		/admin/modsecurity/buildaslwhitelist.sh
+	fi
+else
+        echo 'OWASP3 mod security rules must be installed';
+fi

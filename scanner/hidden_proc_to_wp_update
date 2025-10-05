@@ -1,0 +1,56 @@
+#!/bin/bash
+
+IFS="
+"
+
+for data in $(ps axo user:20=,pid=,args:50= | egrep -v "^root|dovecot/|lsphp|php-fpm:|/usr/sbin/exim|/usr/lib/jvm/jre-1.8.0/bin/java|^mailman|^rpc|%polkitd|%dbus|chrony|^hpsmh|^named|^mailman|^mysql|^polkitd|^dbus|webmaild - serving|^nscd|/usr/bin/convert|^nobody|spamd child|/usr/sbin/sendmail|/usr/sbin/proxyexec|pure-ftpd|cpaneld|^sshd|^hald|php-cgi|webmaild|/usr/local/cpanel/3rdparty/bin/php|avahi" | awk '{print $1 ":" $2 ":" substr($0,index($0,$3))}'); do
+	echo -n 'working on ';
+	myuser=$(echo "${data}" | cut -d: -f1);
+	pid=$(echo "${data}" | cut -d: -f2);
+	command=$(echo "${data}" | cut -d: -f3-);
+
+	if [ "$myuser" = "" ]; then
+		echo 'Got back blank user';
+		continue;
+	fi
+
+	echo "$myuser running $command";
+
+	if [ ! -f /var/cpanel/users/$myuser ]; then
+ 		echo '/var/cpanel/users file does not exist';
+ 		continue;
+	fi
+
+	# does user exist
+	# does homedir exist
+	# do we want to kill proc? only under certain circumstances
+	myuserhomedir=$(grep ^$myuser: /etc/passwd | cut -d: -f6);
+	if [ "$myuserhomedir" = "/" ]; then
+ 		echo 'Homedir is / this should not happen';
+ 		continue;
+	fi
+
+	if [ ! -d $myuserhomedir ]; then
+ 		echo 'Homedir does not exist';
+ 		continue;
+	fi
+
+	cd $myuserhomedir
+	pwd=`pwd`;
+
+	if [ ! "$pwd" = "$myuserhomedir" ]; then
+ 		echo 'Failed to cd into directory';
+ 		continue;
+	fi
+
+	if [ "${command}" = "[stealth]" ]; then
+		echo kill ${pid}
+		kill ${pid}
+	fi
+
+	/admin/clamscan justdb q
+	for i in `find -maxdepth 2   | grep wp-config.php | cut -d/ -f2`; do cd ${pwd}/${i}/; echo y | /admin/wp/isup; sudo -u ${myuser} /opt/intershield/usr/wp; done
+	/admin/wp/cpanel_wpmanager $myuser;
+
+done
+

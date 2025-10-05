@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+
+#colors
+if [ "$COLORS" = "" ]; then
+        blue=$(tput setaf 4)
+        green=$(tput setaf 2)
+        cyan=$(tput setaf 6)
+        normal=$(tput sgr0)
+fi
+
+function dosleep() {
+        sleep 2;
+        echo
+}
+
+# regex for ipv4 need to add in ipv6 as it is supported now
+function check_ip()
+{
+        ip=$1;
+        if [[ $ip =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+                return 1;
+        else
+                return 0;
+        fi
+}
+
+# check exist status
+function didwecomplete()
+{
+
+        # if we get a non zero/non 1 run with the above command we need to exit out of this loop and send an error
+        did_we_complete=$(echo $?);
+
+        #echo "returned $did_we_complete";
+
+        if [ ! "$did_we_complete" = "0" -a ! "$did_we_complete" = "1" ]; then
+                echo
+                echo 'command did not complete successfully';
+                exit;
+        fi
+
+
+
+}
+

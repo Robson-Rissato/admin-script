@@ -1,0 +1,166 @@
+#!/bin/bash
+
+# mdadm --create /dev/md127 --level=1 --raid-devices=2 /dev/sda5 /dev/sdb5
+sleep 1s;
+
+if [ ! "$1" = "yes" ]; then
+        echo 'Must run with yes';
+        exit;
+fi
+
+# add-apt-repository ppa:g2p/storage
+
+apt-get -y update
+apt-get -y install bcache-tools
+
+
+# set LVM
+if [ -e /dev/bcache0 ]; then
+	LVM=/dev/bcache0
+else
+	LVM=/dev/md127
+fi
+
+if [ ! -e  $LVM ]; then
+        echo "$LVM device does not exist";
+        exit;
+fi
+
+
+/admin/sshkeyme
+/admin/resolvconf
+
+mkdir -p /root/cpaneldirect /tools/bandwidth /scripts /var/lib/libvirt/autosuspend
+
+
+
+apt-get -y install qemu-kvm libvirt-bin ubuntu-vm-builder bridge-utils lvm2 python-libvirt sqlite smartmontools tshark iotop freeipmi sendmail-bin libguestfs-dev libguestfs-tools libguestfs-perl python-guestfs
+apt-get -y install wget screen telnet lsof whois bc make file nano smartmontools expect xinetd ebtables ntfsprogs chntpw gnupg-agent isc-dhcp-server unattended-upgrades sqlite php-cli imagemagick cron-apt subversion
+
+/admin/replace-linux "\-d" "" -- /etc/cron-apt/action.d/3-download
+
+# create LVM
+pvcreate $LVM
+vgcreate vz $LVM
+vgscan
+
+
+/etc/init.d/libvirtd restart
+
+virsh net-destroy default
+virsh net-undefine default
+/admin/definekvmtemplates
+/admin/kvmtemplatecron
+
+
+
+
+
+
+
+mdadm --detail --scan > /etc/mdadm/mdadm.conf
+
+cat >>/etc/mdadm/mdadm.conf <<EOF
+# auto-create devices with Debian standard permissions
+CREATE owner=root group=disk mode=0660 auto=yes
+
+# automatically tag new arrays as belonging to the local system
+HOMEHOST <system>
+
+# instruct the monitoring daemon where to send mail alerts
+MAILADDR hardware@interserver.net
+EOF
+
+
+systemctl enable mdmonitor.service
+systemctl restart mdmonitor.service
+
+# cron
+cat > /root/tmp/crontab <<EOF
+5 4 * * * /admin/kvmgettemplate.sh >/dev/null 2>&1
+0 0 * * * /admin/upgradedebs >/dev/null 2>&1
+*/1 * * * * cd /root/cpaneldirect && ./vps_cron.sh
+*/1 * * * * /scripts/securexinetd >/dev/null 2>&1
+0 1 * * * /admin/vzconfbackup >/dev/null 2>&1
+0 * * * * /scripts/buildebtablesrules | /bin/sh
+EOF
+
+crontab /root/tmp/crontab
+/bin/rm /root/tmp/crontab
+
+
+chmod 666 /dev/kvm
+
+
+
+echo -e "#!/bin/sh\n\nrsync -av rsync://vpsadmin.interserver.net/vps/cpaneldirect/ /root/cpaneldirect/\n" > /root/cpaneldirect/upscripts
+chmod +x /root/cpaneldirect/upscripts
+
+echo -e "#!/bin/sh\n\nrsync -av rsync://vpsadmin.interserver.net/vps/kvm/ /scripts/\n" > /scripts/upscripts
+chmod +x /scripts/upscripts
+
+
+# taken from openvz install
+echo "sshd: ALL" >> /etc/hosts.deny
+echo "sshd: 66.45.228.251" >> /etc/hosts.allow
+echo "sshd: 66.45.228.100" >> /etc/hosts.allow
+echo "sshd: 66.45.228.200" >> /etc/hosts.allow
+echo "AllowUsers root@66.45.228.251 root@66.45.228.100 root@66.45.228.200" >> /etc/ssh/sshd_config
+/admin/replace-linux "\#PermitRootLogin yes" "PermitRootLogin without-password" -- /etc/ssh/sshd_config
+
+service ssh restart
+
+touch /etc/dhcp/dhcpd.vps
+chown dhcpd:dhcpd /etc/dhcp/dhcpd.vps
+#dhcp
+cat > /etc/dhcp/dhcpd.conf <<EOF
+authoritative;
+option domain-name "interserver.net";
+option domain-name-servers 64.20.34.50;
+allow bootp;
+allow booting;
+ddns-update-style interim;
+default-lease-time 600;
+max-lease-time 7200;
+log-facility local7;
+
+subnet 68.168.213.96 netmask 255.255.255.224 {
+        next-server 68.168.213.97;
+        option domain-name-servers 64.20.34.50;
+        option domain-name "interserver.net";
+        option routers 68.168.213.98;
+        option broadcast-address 68.168.213.127;
+        default-lease-time                      86400;   # 24 hours
+        max-lease-time                          172800;  # 48 hours
+}
+
+group {
+        include "/etc/dhcp/dhcpd.vps";
+}
+
+EOF
+
+
+/admin/buildsmartconf
+
+
+
+/bin/rm -f /etc/xinetd.d/*
+
+# turn off cpu scaling
+systemctl stop ondemand.service && systemctl mask ondemand.service
+
+# suspend resume guests
+/admin/replace-linux "#ON_BOOT=ignore" ON_BOOT=yes -- /etc/default/libvirt-guests && /admin/replace-linux "#ON_SHUTDOWN=shutdown" ON_SHUTDOWN=suspend -- /etc/default/libvirt-guests
+
+touch /etc/dhcpd.vps
+
+
+sed s#"INTERFACES=\"eth0\""#"INTERFACES=\"br0\""#g -i /etc/default/isc-dhcp-server
+
+# notes for first boot, since it is run from kickstart
+echo 'You need to touch /win or touch /lin to set the os type' >> /etc/motd
+echo 'Must Configure dhcp manually' >> /etc/motd
+echo 'Must run /scripts/upscripts && /root/cpaneldirect/upscripts && /admin/kvmtemplatecron && /root/cpaneldirect/swift.sh' >> /etc/motd
+
+cat /etc/motd

@@ -1,0 +1,13 @@
+Sample /root/.mytop file
+
+user=root
+pass=
+host=localhost
+db=test
+delay=5
+port=3306
+socket=
+batchmode=0
+header=1
+color=1
+idle=1

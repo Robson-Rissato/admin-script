@@ -1,0 +1,35 @@
+#!/bin/sh
+
+if [ ! -e /etc/smartd.conf ]; then
+	echo 'No /etc/smartd.conf';
+	exit;
+fi
+
+/bin/rm /etc/smartd.conf
+touch /etc/smartd.conf
+
+if [ -x /opt/MegaRAID/MegaCli/MegaCli64 ]; then
+	for device in `/opt/MegaRAID/MegaCli/MegaCli64 -pdlist -a0| grep 'Device Id' | awk '{print $3}'`; do
+		echo "found mega $device";
+		echo "/dev/sda -d sat+megaraid,$device -a -s L/../../3/$device -H -m hardware@interserver.net" >> /etc/smartd.conf
+	done
+else
+
+	for device in `ls /dev | grep sd | cut -c 1-3 | uniq`; do
+		echo "found $device"
+		if [ -b "/dev/$device" ]; then
+			echo "Adding $device";
+			echo "/dev/$device -H -m hardware@interserver.net" >> /etc/smartd.conf
+		fi	
+	done
+fi
+
+if [ -e /etc/redhat-release ]; then
+	/sbin/chkconfig smartd on
+	/etc/init.d/smartd restart
+elif [ -e /etc/debian_version ]; then
+	echo "start_smartd=yes" > /etc/default/smartmontools
+	/etc/init.d/smartmontools restart
+fi
+
+

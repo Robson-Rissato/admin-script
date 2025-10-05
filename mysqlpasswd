@@ -1,0 +1,38 @@
+#!/bin/sh
+# WebPanel by VDI
+# This code has been reproduced under permission from VDI
+
+#. /scripts/mysqlinfo
+
+if [ -e "/usr/bin/mysql" ]; then
+        mysql='/usr/bin/mysql'
+        mysqladmin='/usr/bin/mysqladmin'
+else
+        mysql='/usr/local/bin/mysql'
+        mysqladmin='/usr/local/bin/mysqladmin'
+fi
+
+
+ 
+user="$1"
+pass="$2"
+if [ "$user" = "" ]; then
+        echo "Syntax: mysqlpasswd <user> <newpass>"
+	exit
+fi
+if [ "$pass" = "" ]; then
+        echo "Syntax: mysqlpasswd <user> <newpass>"
+	exit
+fi
+$mysql mysql -u root <<END_OF_DATA
+UPDATE user SET Password=PASSWORD('$pass') WHERE user='$user';
+END_OF_DATA
+$mysqladmin -u root reload <<EOM
+EOM
+
+if [ "$user" = "root" ]; then
+echo "[client]" > ~/.my.cnf
+echo "user=root" >> ~/.my.cnf
+echo "pass=$pass" >> ~/.my.cnf
+	chmod 700 ~/.my.cnf
+fi

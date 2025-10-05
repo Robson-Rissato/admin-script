@@ -1,0 +1,158 @@
+#!/bin/bash
+#/admin/.info/mccleanqueueskiplist
+
+if [ -e /etc/master.passwd ]; then
+        LOC='/usr/local/sbin';
+else
+        LOC='/usr/sbin';
+fi
+
+if [ ! -x $LOC/exim ]; then
+	echo 'No /usr/local/sbin/exim or /usr/bin/exim';
+	exit;
+fi
+
+ 
+case "$1" in
+ count)
+	nice -n 19 $LOC/exim -bpc
+ ;;
+ force)
+	nice -n 19 $LOC/exim -qqf -v
+ ;;
+ what)
+	nice -n 19 $LOC/exiwhat
+ ;;
+ tidy)
+	if [ -e /scripts/exim_tidydb ]; then
+		/scripts/exim_tidydb
+	fi
+ ;;
+ rm)
+	nice -n 19 /admin/exigrep
+ ;;
+ incoming)
+	/admin/exi what | grep incoming | cut -d\[ -f2 | cut -d: -f1 | cut -d\] -f1 | sort | uniq -c | sort -n
+ ;;
+ delete)
+	if [ "$2" = "" ]; then
+		echo 'Usage: exi delete email@address';
+		exit;
+	fi
+	$LOC/exiqgrep -i -f $2 | xargs exim -Mrm
+ ;;
+ rmfrozen)
+	$LOC/exiqgrep -z -i | xargs exim -Mrm
+ ;;
+ trace)
+	if [ "$2" = "" ]; then
+		echo 'Usage: exi trace email@address.com';
+		exit;
+	fi
+	$LOC/exim -d -v $2
+  ;;
+  res)
+	/admin/res exim
+  ;;
+#acl_outgoing_spam_scan=0
+#acl_outgoing_spam_scan_over_int=100
+    spamoutscanover10)
+ 	if [ -f /etc/exim.conf.localopts ]; then
+                check=`cat /etc/exim.conf.localopts | grep acl_outgoing_spam_scan_over_int`;
+
+                if [ "$check" = "" ]; then
+                        echo "acl_outgoing_spam_scan_over_int=100" >> /etc/exim.conf.localopts
+                fi
+
+                 /admin/replace-linux acl_outgoing_spam_scan_over_int=0 acl_outgoing_spam_scan=100 -- /etc/exim.conf.localopts && /admin/replace-linux acl_outgoing_spam_scan=1 acl_outgoing_spam_scan=0 -- /etc/exim.conf.localopts && /scripts/buildeximconf && /scripts/restartsrv_exim
+        else
+                echo "Missing /etc/exim.conf.localopts";
+        fi
+  ;;
+
+  scancwd)
+        if [ -e /admin/.info/noscancwd ]; then
+                echo 'Exiting due to /admin/.info/noscancwd';
+                exit;
+        fi
+	checkload=`awk '{print $1}' /proc/loadavg | cut -d. -f1`;
+	if [ "$checkload" -gt "30" ]; then
+		echo 'Exiting on load above 30';
+		exit;
+	fi
+
+	if [ -e /var/log/exim_mainlog ]; then
+		if [ "$2" = "faster" ] ; then
+			echo 'Called with faster skipping public_html dirs';
+			if [ -f /admin/.info/mccleanqueueskiplist ]; then
+				echo 'Skipping folders based on /admin/.info/mccleanqueueskiplist';
+				dirs=`tail -n 10000 /var/log/exim_mainlog | grep cwd | grep /home | cut -d= -f2 | awk '{print $1}' | sort | uniq | grep public_html | grep -v public_html$ | grep -v -f /admin/.info/mccleanqueueskiplist`;
+			else
+				dirs=`tail -n 10000 /var/log/exim_mainlog | grep cwd | grep /home | cut -d= -f2 | awk '{print $1}' | sort | uniq | grep public_html | grep -v public_html$`;
+			fi
+		else
+			dirs=`tail -n 10000 /var/log/exim_mainlog | grep cwd | grep /home | cut -d= -f2 | awk '{print $1}' | sort | uniq | grep public_html`; 
+		fi
+		if [ ! "$dirs" = "" ]; then
+			pwd=`pwd`;
+			for dir in $dirs; do
+				echo "Found $dir";
+				if [ -d $dir ]; then
+					cd $dir
+					if [ -e /admin/scanner/clamscanrun.sh ]; then
+						/admin/clamscan shelldb quarentine norecursive
+					else
+						echo '/admin/scanner/clamscanrun.sh not found, will only display output';
+						/admin/clamscan shelldb
+					fi
+				else
+					echo 'Not a directory';
+				fi
+			done
+			cd $pwd
+		else
+			echo 'Returned no directories to scan';
+		fi
+
+	else
+		echo 'Exim mainlog not found';
+	fi
+ ;;
+  spamoutscan)
+	if [ -f /etc/exim.conf.localopts ]; then
+		check=`cat /etc/exim.conf.localopts | grep acl_outgoing_spam_scan`;
+
+		if [ "$check" = "" ]; then
+			echo "acl_outgoing_spam_scan=1" >> /etc/exim.conf.localopts
+		fi
+
+		 /admin/replace-linux acl_outgoing_spam_scan=0 acl_outgoing_spam_scan=1 -- /etc/exim.conf.localopts && /scripts/buildeximconf && /scripts/restartsrv_exim
+	else
+		echo "Missing /etc/exim.conf.localopts";
+	fi
+  ;;
+  clamoutscan)
+   if [ -f /etc/exim.conf.localopts ]; then
+		/admin/installcpanelclamav
+                check=`cat /etc/exim.conf.localopts | grep acl_outgoing_malware_scan`;
+
+                if [ "$check" = "" ]; then
+                        echo "acl_outgoing_malware_scan=1" >> /etc/exim.conf.localopts
+                fi
+		check2=`cat /etc/exim.conf.localops | grep malware_deferok`;
+			if [ "$check2" = "" ]; then
+				echo "malware_deferok=1" >> /etc/exim.conf.localops
+			else
+				replace malware_deferok=0 malware_deferok=1 -- /etc/exim.conf.localopts
+			fi
+                 /admin/replace-linux acl_outgoing_malware_scan=0 acl_outgoing_malware_scan=1 -- /etc/exim.conf.localopts && /scripts/buildeximconf && /scripts/restartsrv_exim
+        else
+                echo "Missing /etc/exim.conf.localopts";
+        fi
+  
+  ;;
+  *)
+	echo 'Usage: exi [incoming|count|force|what|tidy|rm|delete (. is wildcard)|trace|res|rmfrozen|spamoutscan or spamoutscanover10 (cpanel only) | clamoutscan (cpanel only) |scancwd (cpanel only)]';
+  ;;
+ esac
+

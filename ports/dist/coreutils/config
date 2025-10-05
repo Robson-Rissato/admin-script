@@ -1,0 +1,8 @@
+NAME='coreutils';
+VERSION='6.9';
+MD5='62032af4d79cd99743e06d5c40c4989c';
+EXT='tar.gz';
+DEPS='gcc gcc-c++';
+CONFIG='./configure CC="gcc -static" --prefix=/rescue';
+MAKE='make';
+MAKEINSTALL='make install';

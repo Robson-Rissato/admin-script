@@ -1,0 +1,96 @@
+#!/bin/bash
+
+# set up mailchanels or intrelay x-forward
+# also enable spam report in logs to help determine why outgoing spam was yes
+
+MAILTO=""
+
+debug=0;
+
+if [ ! -e /usr/local/cpanel ]; then
+	exit;
+fi
+
+if [ ! -f /etc/exim.conf.local ]; then
+	exit;
+fi
+
+if [ -f /etc/clamddisable ]; then
+	/bin/rm -v /etc/clamddisable
+	/scripts/restartsrv_clamd
+fi
+
+checkmail=$(grep mailchan /etc/exim.conf.local);
+if [ "$checkmail" = "" ]; then
+	if [ "$debug" = "1" ]; then
+		echo 'Mailchannels not installed';
+	fi
+	exit;
+fi
+
+if [ -e /root/exim.tmp ]; then
+	/bin/rm /root/exim.tmp
+fi
+
+if [ -e /root/exim.tmp2 ]; then
+	/bin/rm /root/exim.tmp2
+fi
+
+if [ -e /admin/replace-linux ]; then
+	#/admin/replace-linux rewrite_from=all rewrite_from=disable -- /etc/exim.conf.localopts >/dev/null 2>&1
+        /admin/replace-linux "detected OUTGOING smtp message as spam" "detected OUTGOING smtp message as spam \$spam_report" -- /etc/exim.conf >/dev/null 2>&1
+	/admin/replace-linux "detected OUTGOING not smtp message as spam" "detected OUTGOING not smtp message as spam \$spam_report" -- /etc/exim.conf >/dev/null 2>&1
+fi
+check1=$(grep "X-MC-Forward" /etc/exim.conf);
+
+if [ "$check1" = "" ]; then
+	var1="headers_add = \"X-MC-Forward: \$original_local_part@\$original_domain\\\n\""
+	search="virtual_aliases_nostar:"
+	awk -v S="$search" -v V1="$var1" '{if ($0~S) print $0 "\n" V1 ; else print $0}' /etc/exim.conf > /root/exim.tmp
+
+
+	var1="headers_add = \"X-MC-MailingList: \$original_local_part@\$original_domain\\\n\""
+	search="mailman_virtual_transport:"
+
+	awk -v S="$search" -v V1="$var1" '{if ($0~S) print $0 "\n" V1 ; else print $0}' /root/exim.tmp > /root/exim.tmp2
+
+	mv -f /root/exim.tmp2 /etc/exim.conf
+	chmod 644 /etc/exim.conf
+	/scripts/restartsrv_exim > /dev/null
+	if [ -f /root/exim.tmp ]; then
+		/bin/rm /root/exim.tmp
+	fi
+
+	if [ -f /root/exim.tmp2 ]; then
+		/bin/rm /root/exim.tmp2
+	fi
+else
+	if [ "$debug" = "1" ]; then
+		echo "already exists";
+	fi
+fi
+
+if [ ! -e /admin/.info/_mcdkim2 ]; then
+	touch /admin/.info/_mcdkim2
+	if [ -f /admin/.info/_mcdkim ]; then
+		/bin/rm /admin/.info/_mcdkim
+	fi
+	/admin/mailchannels.sh fix &>/dev/null
+else
+	if [ "$debug" = "1" ]; then
+                echo "mcmaxhouly applied";
+        fi
+
+fi
+
+if [ -f /etc/static_route ]; then
+	echo 'Building static_route to exclude forwarders';
+	if [ ! -d /opt/mailchannels ]; then
+		mkdir -p /opt/mailchannels
+		echo `hostname` > /opt/mailchannels/exclude
+	fi
+	cd /opt/mailchannels && echo > /etc/static_route && for domain in `cat /etc/localdomains | grep -v -f /opt/mailchannels/exclude`; do echo "${domain}: smtp.mailchannels.net" >> /etc/static_route; done
+	chown root:mail /etc/static_route
+	chmod 660 /etc/static_route
+fi
+

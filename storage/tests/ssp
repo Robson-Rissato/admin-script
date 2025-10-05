@@ -1,0 +1,1468 @@
+#!/usr/bin/env bash
+
+# 1/19/2025
+# directadmin webhosting and storage ssp
+# this checks for common config errors or problems
+
+if [ -f /admin/includes/common_bash_functions ]; then
+	source /admin/includes/common_bash_functions
+fi
+
+if [ ! -d /usr/local/directadmin ]; then
+	echo 'Requires directadmin';
+	exit;
+fi
+
+if [ "$COLORS" = "" ]; then
+        blue=$(tput setaf 4)
+        green=$(tput setaf 2)
+        cyan=$(tput setaf 6)
+        normal=$(tput sgr0)
+fi
+
+# switch to test directadmin dns with nslookup
+# we set to 0 on storage servers
+testdns=1;
+
+function zfs_get() {
+        if [ "$1" = "" ]; then
+                echo 'error in zfs_get';
+        else
+                # check if we exist
+                check_z=`zfs get version -o property $1 | grep -v ^PROPERTY`;
+                if [ "$check_z" = "version" ]; then
+                        echo "$1 mount point";
+                        recommend=0;
+                        for z_info in `zfs get all $1 | egrep "checksum|exec|sync|redundant_metadata" | awk '{print $2 "|" $3 }'`; do
+                                #https://stackoverflow.com/questions/10520623/how-to-split-one-string-into-multiple-variables-in-bash-shell
+                                var1=${z_info%|*};
+                                var2=${z_info#*|};
+                                case "$var1" in
+                                        checksum)
+                                        if [ "$var2" = "on" ]; then
+                                                recommend=1;
+                                                echo "$1 zfs checksum is set to on - recommended off";
+                                                echo "  ${green}zfs set checksum=off $1${normal}";
+                                        fi
+                                ;;
+                                        exec)
+                                        if [ "$1" = "vz/tmp" ]; then
+                                                if [ "$var2" = "on" ]; then
+                                                        recommend=1;
+                                                        echo "$1 zfs exec is set to on - recommended off";
+                                                        echo "  ${green}zfs set exec=off $1 ${normal}";
+                                                fi
+                                        fi
+                                ;;
+                                        sync)
+                                        if [ "$var2" = "standard" ]; then
+                                                recommend=1;
+                                                echo "$1 zfs sync is set to standard - recommended disabled";
+                                                echo "  ${green}zfs set sync=disabled $1 ${normal}";
+                                        fi
+                                ;;
+                                        redundant_metadata)
+                                        if [ "$var2" = "all" ]; then
+                                                recommend=1;
+                                                echo "$1 zfs redundant_metadata is set to on - recommended most";
+                                                echo "  ${green}zfs set redundant_metadata=most $1${normal}";
+                                        fi
+                                ;;
+                                *)
+                                        echo 'zfs get function returned unknown data perhaps due to internal changes in zfs';
+                                ;;
+                                esac
+                        done
+                        echo
+                        if [ "$recommend" = "1" ]; then
+                                echo 'zfs Changes on heavily loaded servers may take a long time. Best to site litespeed and cron before hand';
+                        fi
+                        echo
+                        return 0;
+                else
+                        echo 'Error looking up zfs system for ' $1;
+                        return 1;
+                fi
+        fi
+}
+
+function dosleep() {
+        sleep 2s;
+        echo
+}
+
+if [ "$1" = "all" ]; then
+	echo 'Running all tests';
+else
+	echo 'Use ./ssp all';
+	echo 'To run io / all zfs tests';
+fi
+sleep 1s;
+echo
+
+shorty=`hostname -s | cut -c1-3`;
+
+# BEGIN TESTS
+# basic permission check of folders that should be root root owned with 755
+for myfolder in /etc /var / /usr; do
+        if [ -e $myfolder ]; then
+        	check=`stat -c "%U %G" $myfolder`;
+		permcheck=`stat -c %a $myfolder`;
+        	if [ ! "$check" = "root root" ]; then
+                	echo " * ${cyan} WARNING ${normal}		Owner / group on $myfolder are incorrect";
+                	stat $myfolder
+                        dosleep;
+		else
+			echo "${green}$myfolder${normal}	ownership passes";
+                fi
+
+		if [ ! "$permcheck" = "755" ]; then
+			# 755 / on ubuntu but 555 on redhat/alma
+			if [ "$myfolder" = "/" ]; then
+				if [ -e /etc/redhat-release ]; then
+					if [ "$permcheck" = "555" ]; then
+						echo "${green}$myfolder${normal}        permissions passes";
+					else
+						echo " * ${cyan} WARNING ${normal}         chmod  on $myfolder is incorrect and should be 555 (almalinux on / is 555)";
+					fi
+					continue;
+				fi
+			fi
+                        echo " * ${cyan} WARNING ${normal} 	chmod  on $myfolder is incorrect and should be 755";
+			echo 'Example fix: chmod 775 /var/log; chgrp syslog /var/log; chmod 755 /var/log/exim; chown mail:mail /var/log/exim';
+                        stat $myfolder
+                        dosleep;
+		else
+			echo "${green}$myfolder${normal}	permissions passes";
+                fi
+
+        else
+                echo "Folder $myfolder does not exist";
+                dosleep;
+        fi
+done
+
+# special folder on debian and ubuntu /var/log
+# /var/log root syslog and 775
+if [ -f /etc/debian_version ]; then
+	logcheck=`stat -c "%U %G" /var/log`;
+	logpermcheck=`stat -c %a /var/log`;
+	if [ ! "$logcheck" = "root syslog" ]; then
+		echo " * ${cyan} WARNING ${normal}		Owner / group on /var/log are incorrect for ubuntu";
+		echo 'To fix:';
+		echo "${green}chown root:syslog /var/log${normal}";
+		echo
+		stat /var/log;
+		echo 
+		dosleep;
+	fi
+
+	if [ ! "$logpermcheck" = "775" ]; then
+		echo " * ${cyan} WARNING ${normal} permissions on /var/log are incorrect for ubuntu";
+                echo 'To fix:';
+                echo "${green}chmod 775 /var/log${normal}";
+                echo
+		stat /var/log;
+		echo
+                dosleep;
+	fi
+else
+	logcheck=`stat -c "%U" /var/log`;
+	if [ ! "$logcheck" = "root" ]; then
+		echo " * ${cyan} WARNING ${normal}              Owner / group on /var/log are incorrect for RHEL";
+		echo 'To fix:';
+                echo "${green}chown root:root /var/log; chod 755 /var/log${normal}";
+                echo
+                stat /var/log;
+                echo
+                dosleep;
+	fi
+fi
+
+tmpcheck=`stat -c "%U %G" /tmp`;
+tmppermcheck=`stat -c %a /tmp`;
+if [ "$tmpcheck" = "root root" ]; then
+	echo "${green}/tmp${normal}    ownership passes";
+else
+	echo " * ${cyan} WARNING ${normal}         Owner / group on /tmp are incorrect";
+	dosleep;
+fi
+
+if [ "$tmppermcheck" = "1777" ]; then
+	echo "${green}/tmp${normal}    permissions passes";
+else
+	echo " * ${cyan} WARNING ${normal}     Permissions on /tmp are incorrect";
+	dosleep;	
+fi
+
+#/etc/virtual/majordomo/wrapper should be 4755
+if [ -e /etc/virtual/majordomo/wrapper ]; then
+	majorpermcheck=`stat -c %a /etc/virtual/majordomo/wrapper`;
+	if [ ! "$majorpermcheck" = "4755" ]; then
+		echo
+		echo " * ${cyan} WARNING ${normal}     Permissions on /etc/virtual/majordomo/wrapper are incorrect mailing lists will not work";
+		echo "TO FIX: ${green}/usr/local/directadmin/custombuild/build majordomo${normal}    permissions passes";
+		dosleep;
+	fi
+fi
+
+#these files should not be empty
+for mtcheck in /etc/virtual/domainowners /etc/virtual/domains /etc/hosts /etc/exim.authenticators.post.conf; do
+	if [ ! -s ${mtcheck} ]; then
+		echo
+		echo " * ${cyan} WARNING ${normal}     ${mtcheck} is an empty file";
+		dosleep;
+	fi
+done
+
+if [ -f /etc/virtual/domainowners ]; then
+	downers=`cat /etc/virtual/domainowners | wc -l`;
+	vdomains=`cat /etc/virtual/domains | wc -l`;
+	echo
+	echo "* ${cyan} note ${normal} /etc/virtual/domainowners has $downers entries and  /etc/virtual/domains has $vdomains";
+	echo 'If one of these files does not have all the domains in them expect email problems';
+	echo 'Info on rebuilding https://docs.directadmin.com/directadmin/backup-restore-migration/restore.html';
+	dosleep;
+fi
+
+if [ -d /home ]; then
+	echo 'Checking /home permissions for missing access permissions';
+	ls -l /home | grep -v access | egrep -v "admin|lscache|quags|tmp|cldiaguser_" | grep -v ^total
+	echo 'Directadmin should have group as access';
+	dosleep;
+fi
+
+#
+# check auto updates are enabled
+#
+if [ -f /usr/local/directadmin/custombuild/options.conf ]; then
+	echo 'Checking auto updates in da';
+	ucheck=`grep ^updates= /usr/local/directadmin/custombuild/options.conf | cut -d= -f2`;
+	if [ "$ucheck" = "yes" ]; then
+		echo "	${green}updates are enabled${normal}";
+	else
+		echo 'Enabling auto updates in custombuild';
+		if [ -x /admin/updateda ]; then
+			/admin/updateda auto
+		else
+			echo 'Missing /admin/updateda to enable auto updates';
+		fi
+		dosleep;
+	fi
+
+	if [ -f /usr/local/directadmin/cusombuild/custom/custom_versions.txt ]; then
+		echo '	* NOTE /usr/local/directadmin/cusombuild/custom/custom_versions.txt exists';
+		echo 'Review this file as this can hold back versions of software - generally this is not a good idea and just a short term solution';
+		dosleep;
+	fi
+fi
+echo
+
+# license status
+if [ -L /usr/bin/da ]; then
+	da license
+	echo
+	branch=`da config | grep ^update_channel= | cut -d= -f2`;
+	if [ ! "$branch" = "stable" ]; then
+		echo " * ${cyan} note ${normal} directadmin branch is set to $branch not stable";
+		dosleep;
+	fi
+else
+	echo ' * Missing /usr/bin/da - da version is likely very old';
+fi
+
+if [ -x /usr/bin/imunify360-agent ]; then
+	echo -n 'Checking imunify360 license status...';
+	/usr/bin/imunify360-agent rstatus
+else
+	# imunify takes a while it is already doing a sleep
+	dosleep;
+fi
+# end license checks
+
+if [ -x /usr/local/lsws/bin/wswatch.sh ]; then
+	wscheck=`ps auxw | egrep [w]swatch.sh$`;
+	if [ "$wscheck" = "" ]; then
+		echo " * ${cyan} WARNING ${normal}/usr/local/lsws exists but wswatch is not running";
+		echo 'To fix run';
+		echo " * ${green}nohup /usr/local/lsws/bin/wswatch.sh &${normal}";
+		echo "and add the same command to start on boot in ${green}/etc/rc.local${normal}";
+		echo "and run ${green}chmod +x /etc/rc.local${normal}";
+		dosleep;
+	else
+		echo '	Litespeed wscheck.sh is running';
+	fi
+	# using lsws to assume we are on an interserver system
+	if [ ! -f /usr/local/directadmin/data/templates/custom/virtual_host2.conf.CUSTOM.4.post ]; then
+		echo '	Create /usr/local/directadmin/data/templates/custom/virtual_host2.conf.CUSTOM.4.post to add in webmail urls';
+		echo '	http://help.directadmin.com/item.php?id=92';
+		dosleep;
+	fi
+fi
+
+# zfs and space functions moved to their own generic function
+if [ -x /admin/tests/include/disk ]; then
+	/admin/tests/include/disk
+fi
+
+# ALL test
+if [ "$1" = "all" ]; then
+	if [ -x /usr/sbin/iotop ]; then
+       		printf "%-40s%s" "Displaying iotop info..." "";
+        	echo -e "OK";
+        	printf "%-70s\n" "-" | sed 's/\s/-/g';
+        	iotop -bn 1 | head -n 20 | sed "3 s/.*/$(printf "%-70s\n" "-" | sed 's/\s/-/g')/";
+        	printf "%-70s\n" "-" | sed 's/\s/-/g';
+        	echo;
+        	dosleep;
+	else
+        	echo 'No iotop';
+	fi
+
+	if [ -x /usr/bin/top ]; then
+        	printf "%-40s%s" "Displaying top info..." "";
+        	echo -e "OK";
+        	printf "%-79s\n" "-" | sed 's/\s/-/g';
+        	top -bn 1 | head -n 20
+        	printf "%-79s\n" "-" | sed 's/\s/-/g';
+        	echo;
+        	dosleep;
+	else
+        	echo 'No top found';
+	fi
+fi
+
+if [ -d /usr/local/lsws ]; then
+	printf "%-40s%s" "Checking system processes lsphp..." "";
+	maxsuphp=`grep phpSuExecMaxConn /usr/local/lsws/conf/httpd_config.xml  | cut -d\> -f2 | cut -d\< -f1`;
+	if [ ! "$maxsuphp" = "" ]; then
+		echo -e "phpSuExecMaxConn is ${maxsuphp}";
+	else
+	        echo -e "OK";
+	fi
+
+        printf "%-42s\n" "-" | sed 's/\s/-/g';
+        ps auxw | grep [l]sphp | awk '{print $1}' | sort | uniq -c | sort -n | tail -5 | awk '{printf "- %7d  %-29s -\n",$1,$2}'
+        printf "%-42s\n" "-" | sed 's/\s/-/g';
+        echo -e "Number of LSPHP processes per user should not exceed 20\n";
+        dosleep;
+	
+	if [ -f /tmp/lshttpd/.rtreport ]; then
+		echo 'Most used vhost connections';
+		cat /tmp/lshttpd/.rtreport | grep APVH | awk '{print $2 " " $7 " "  $8 " " $5 " " $6 '} | egrep -v LSAPI] | grep -v "0,$" | cut -d, -f1-2 | sort -n -k5 | tail -n 10
+		dosleep;
+		echo
+	else
+		echo 'No /tmp/lshttpd/.rtreport for realtime litespeed report';
+		echo
+	fi
+
+	echo 'Checking for old lsphp processes';
+	ps -ef  | grep [l]sphp | awk '$5 !~ ":" {print}'
+	echo
+	echo 'Old lsphp processes usually can be killed if any';
+	echo 'To kill all processes by a user: pkill -u username';
+	dosleep;
+
+	if [ -x /usr/local/lsws/bin/lshttpd ]; then
+		ols=`/usr/local/lsws/bin/lshttpd  -v | grep -i Open`;
+                if [ ! "$ols" = "" ]; then
+                        echo 'Openlitespeed running';
+                        if [ -e /usr/sbin/pam_imunify_daemon ]; then
+                                echo " * ${cyan}WARN ${normal} Imunify360 detected. Openlitespeed is not fully supported on imunify360.";
+                        fi
+		else
+		#litespeed running
+			#cp /admin/storage/config/httpd_config.xml /usr/local/lsws/conf/httpd_config.xml
+			if [ -f /usr/local/lsws/conf/httpd_config.xml ]; then
+				captchacheck=`grep captcha /usr/local/lsws/conf/httpd_config.xml`;
+				if [ "$captchacheck" = "" ]; then
+					echo " * ${cyan}Warning no captcha set in litespeed config ${normal}";
+					echo
+					echo 'TO FIX';
+					if [ "$shorty" = "sto" ]; then
+						echo "cp /admin/storage/config/httpd_config.xml.storage /usr/local/lsws/conf/httpd_config.xml && /usr/local/lsws/bin/lswsctrl restart";
+					else
+						echo "cp /admin/storage/config/httpd_config.xml /usr/local/lsws/conf/httpd_config.xml && /usr/local/lsws/bin/lswsctrl restart";
+					fi
+					dosleep;			
+				fi
+			else
+				echo " * ${cyan}Missing /usr/local/lsws/conf/httpd_config.xml ${normal}";
+			fi
+		fi
+	fi
+else
+	for phpver in `ls /usr/local | grep ^php`; do
+		if [ -f /usr/local/${phpver}/var/log/php-fpm.log ]; then
+			maxchildcheck=`grep "max_children" /usr/local/${phpver}/var/log/php-fpm.log | tail -n 2`;
+			if [ ! "$maxchildcheck" = "" ]; then
+				echo " * ${cyan}WARN ${normal} php max children hit in /usr/local/${phpver}/var/log/php-fpm.log";
+				echo 'See https://docs.directadmin.com/changelog/version-1.57.3.html#lower-default-php-fpm-max-children-to-10-for-new-installs-templates';
+				echo
+				echo 'Example fix: da config-set php_fpm_max_children_default 50 --restart && da build rewrite_confs';
+				dosleep;
+			fi
+		fi
+	done
+fi
+
+if [ -e /usr/bin/jetbackup5api ]; then 
+	echo "	Detected ${green}jetbackup5${normal} - checking license and listing backup jobs" && jetbackup5 --license
+	jetbackup5api -F listBackupJobs | grep last_run
+	echo 'Be sure to investigate no jobs listing if jetbackup is installed and nothing returns';
+	dosleep;
+	if [ ! -f /usr/local/jetapps/etc/mongod.conf ]; then
+		echo '	Missing /usr/local/jetapps/etc/mongod.conf on ubuntu check apt update; apt upgrade for a failed update';
+		dosleep;
+	fi
+elif [ -e /usr/bin/jetapi ]; then
+	echo "	Detected ${green}jetbackup4${normal} - listing backup jobs";
+	jetapi backup -F listBackupJobs | grep last_run
+	echo 'Be sure to investigate no jobs listing if jetbackup is installed and nothing returns';
+	dosleep;
+else
+	if [ ! "$shorty" = "sto" ]; then
+		echo " * ${cyan}Warning Jetbackup is not installed${normal} - this is expected on storage systems and client systems";
+		# backup set up errors I found in the past on directadmin
+		if [ -f /etc/redhat-release ]; then
+			corecheck=`rpm -V coreutils`;
+			if [ ! "$corecheck" = "" ]; then
+				echo " * ${cyan}Warning ${normal} - rpm -V coreutils does not verify which caused directadmin calls to /bin/cat to fail setting up backups in directadmin once";
+				dosleep;
+			fi
+			if [ -x /usr/bin/curl ]; then
+				curlcheck=`rpm -V curl`;
+				if [ ! "$curlcheck" = "" ]; then
+					echo " * ${cyan}Warning ${normal} - rpm -V curl does not verify - this caused a backup set up problem in directadmin in the past you may want to yum reinstall curl";
+					dosleep;
+				fi
+			else
+				echo " * ${cyan}Warning ${normal} - missing /usr/bin/curl which is needed for directadmin backups";
+				dosleep;
+			fi
+		fi
+	fi
+fi
+
+printf "%-42s\n" "-" | sed 's/\s/-/g';
+ps auxw | egrep -v "^root|^USER"  | sort | awk '{print $1}' | sort | uniq -c | sort -n | tail -5 | awk '{printf "- %7d  %-29s -\n",$1,$2}'
+printf "%-42s\n" "-" | sed 's/\s/-/g';
+echo 'Total processes per user should not exceed 30 * results may vary based on the plan';
+
+# this is more ubuntu specific (cloudlinux can limit much better)
+if [ ! -e /usr/sbin/lvectl ]; then
+	echo 'Want to limit a user?';
+	echo "  ${green}/etc/security/limits.conf${normal}"
+	echo "    ${green}username hard           nproc                20${normal}";
+	echo;
+
+	if [ -f /usr/local/directadmin/custombuild/options.conf ]; then
+		daclcheck=`grep ^cloudlinux= /usr/local/directadmin/custombuild/options.conf  | cut -d= -f2`;
+		if [ "$daclcheck" = "yes" ]; then
+			echo " * ${cyan} WARN ${normal} - cloudlinux is is set to YES in options.conf but lvectl is not installed";
+			dosleep;
+		fi
+	fi
+fi
+dosleep;
+
+if [ -x /usr/sbin/dovecot ]; then
+        printf "%-42s\n" "-" | sed 's/\s/-/g';
+        ps auxw | grep dovecot | sort | egrep "imap|pop" | awk '{print $12}' | grep @ | cut -d\[ -f2 | sort | uniq -c | sort -n | tail -5 | awk '{printf "- %7d  %-29s -\n",$1,$2}'
+        printf "%-42s\n" "-" | sed 's/\s/-/g';
+        echo 'Number of logins per user in dovecot';
+        if [ -f /etc/dovecot/conf.d/90-fts-xapian.conf ]; then
+                echo 'FTS in dovecot may cause high load. Disable with '
+                echo "  ${green}/admin/storage/disable_fts${normal}";
+                echo;
+                dosleep;
+        fi
+
+	# check for too many doveconf runs
+	dccheck=`ps auxw | grep doveconf | grep ^root | wc -l`;
+	if [ "$dccheck" -gt "2" ]; then
+		echo " * ${cyan}Warning${normal} MULTIPLE DOVECONF processes running - likely caused by many domains and slow start up";
+		dosleep;
+	fi 
+
+	if [ -f /var/log/mail.log ]; then
+		anothersnicheck=`tail -n 1000 /var/log/mail.log | grep "Also failed to read config by executing doveconf"`;
+		maximapcheck=`tail -n 100000 /var/log/mail.log | grep "process_limit } reached?" | tail -n 10`;
+	else
+		anothersnicheck=`tail -n 1000 /var/log/maillog | grep "Also failed to read config by executing doveconf"`;
+		maximapcheck=`tail -n 100000 /var/log/maillog | grep "process_limit } reached?" | tail -n 10`;
+	fi
+	if [ ! "$anothersnicheck" = "" ]; then
+		echo "* ${cyan}Warning${normal} seeing read config by executing doveconf in /var/log/maillog this system has dovecot sni issues";
+		dosleep;
+	fi
+
+	if [ ! "$maximapcheck" = "" ]; then
+		echo "* ${cyan}Warning${normal} seeing process_limit } reached? in maillog. Dovecot may be reaching max imap connections";
+		echo "see https://wiki.interserver.net/index.php/Dovecot_raise_limits_in_directadmin";
+                dosleep;
+	fi
+
+	if [ ! -f /usr/local/directadmin/custombuild/custom/dovecot/configure.dovecot ]; then
+		numdcheck=`cat /etc/virtual/domains | wc -l`;
+		if [ -f /var/log/mail.log ]; then
+			fataldcheck=`tail -n 1000 /var/log/mail.log | egrep -i "Fatal Failure|Fatal: Error reading configuration"`;
+		else
+ 	               fataldcheck=`tail -n 1000 /var/log/maillog | egrep -i "Fatal Failure|Fatal: Error reading configuration"`;
+		fi
+		if [ "$numdcheck" -gt "10000" -o ! "${fataldcheck}" = "" ]; then
+			echo " * ${cyan}Warning over 10000 domains or fatal failure dovecot errors in logs${normal} -  Add dovecot start up fix for many domains";
+			echo
+			echo "mkdir -p /usr/local/directadmin/custombuild/custom/dovecot; cp /admin/storage/config/dovecot/configure.dovecot /usr/local/directadmin/custombuild/custom/dovecot; chmod +x /usr/local/directadmin/custombuild/custom/dovecot/configure.dovecot";
+			echo "/usr/local/directadmin/custombuild/build dovecot";
+			dosleep;
+		fi
+	else
+		if [ -f /var/log/mail.log ]; then
+                        fataldcheck=`tail -n 1000 /var/log/mail.log | egrep -i "net_accept() failed: Too many open files"`;
+                else
+                        fataldcheck=`tail -n 1000 /var/log/maillog | egrep -i "net_accept() failed: Too many open files"`;
+                fi
+		if [ ! "$fataldcheck" = "" ]; then
+			echo " * ${cyan}WARNING too many open files for dovecot${normal}";
+			echo "to fix"
+			echo 
+			echo "systemctl edit dovecot.service"
+			echo -e "[Service]\nLimitNOFILE=65535\nLimitNPROC=65535"
+			echo
+			echo "systemctl restart dovecot";
+			echo
+		fi
+
+	fi
+
+fi
+
+# mysql stuff
+
+if [ -f /etc/systemd/system/multi-user.target.wants/mysqld.service ]; then
+	mysqlptmpcheck=`grep -i ^PrivateTmp /etc/systemd/system/multi-user.target.wants/mysqld.service | cut -d= -f2`;
+	if [ ! "$mysqlptmpcheck" = "false" ]; then
+		echo " * ${cyan}WARNING${normal} privatetmp may not be false for systemd and mysql in /etc/systemd/system/multi-user.target.wants/mysqld.service which can lead to permission problems in mysql queries (only if relevant to the issue)";
+		dosleep;
+	fi
+fi
+
+if [ -f /etc/my.cnf ]; then
+	# we may have spaces between the = or even the start. This seems to get all the possibilities
+	maxuserconnections=`grep max_user_connections /etc/my.cnf | grep -v ^# | cut -d= -f2 | awk '{print $1}'`
+	if [ "$maxuserconnections" = "" ]; then
+		echo " * ${cyan}   WARNING${normal} NO MAX USER CONNECTIONS set in /etc/my.cnf";
+		dosleep;
+	else
+		echo "  Max user connections for mysql is set to ${green}$maxuserconnections${normal}"
+	fi
+fi
+
+if [ ! -f /root/.my.cnf ]; then
+        echo 'Missing /etc/my.cnf RECOMMENDED to set this';
+        echo "  ${green}cp /usr/local/directadmin/conf/mysql.conf /root/.my.cnf && /admin/replace-linux passwd password -- /root/.my.cnf && sed -i '1i[client]' /root/.my.cnf${normal}";
+fi
+
+#https://tickets.directadmin.com/ticket.php?hash=loP4iIzWAgrUCEFoWQFlcdLreaiJ1Kga
+if [ -f /usr/local/directadmin/conf/mysql.conf ]; then
+	localhostcheck=`grep 127.0.0.1 /usr/local/directadmin/conf/mysql.conf`;
+	if [ ! "$localhostcheck" = "" ]; then
+		echo 'host=127.0.0.1 is not supported in /usr/local/directadmin/conf/mysql.conf on cloudlinux and may break wordpress installs unsure on ubuntu';
+		echo 'To fix remove from /usr/local/directadmin/conf/mysql.conf';
+		dosleep;
+	fi
+fi
+
+if [ -x /usr/local/bin/mysqladmin -o -x /usr/bin/mysqladmin ]; then
+        printf "%-42s\n" "-" | sed 's/\s/-/g';
+        mysqladmin processlist | sort | awk '{print $4}' | grep _ |  sort | uniq -c | sort -n | tail -5 | awk '{printf "- %7d  %-29s -\n",$1,$2}'
+        printf "%-42s\n" "-" | sed 's/\s/-/g';
+        echo 'Top mysql processes per db user name';
+        echo '	Did you know? in mysql as root you can lower max_user connections with out a restart running';
+        echo "  ${green}set global max_user_connections = 20;${normal}";
+	remotehosts=`mysqladmin processlist | awk '{print $6}' | grep : | cut -d: -f1 | sort | uniq`;
+	if [ ! "$remotehosts" = "" ]; then
+		echo
+		echo 'Remote connections to mysql';
+		echo "${remotehosts}";
+	fi
+        dosleep;
+fi
+
+if [ -f /etc/systemd/system/multi-user.target.wants/cron.service ]; then
+        check=`grep -i nice /etc/systemd/system/multi-user.target.wants/cron.service`;
+        if [ "$check" = "" ]; then
+		if [ ! -f /etc/systemd/system/cron.service.d/override.conf ]; then
+			echo 'Recommend setting weighted cron';
+			echo 'To set:';
+			echo "${green}systemctl edit cron.service${normal}";
+			echo 'And add';
+			cat <<EOF			
+[Service]
+MemoryHigh=4096M
+Nice=10
+TasksMax=2000
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+EOF
+
+                	echo
+                	echo 'and run ';
+                	echo "  ${green}systemctl stop cron.service; systemctl daemon-reload; systemctl start cron.service${normal}";
+			dosleep;
+		fi
+        fi
+fi
+
+# cloudlinux nproc can limit this wekk enough
+if [ ! -e /usr/sbin/lvectl ]; then
+	#
+	# login to ssh limit
+	#
+	if [ -f /etc/security/limits.conf ]; then
+        	maxlogins=`grep maxlogins /etc/security/limits.conf | grep -v ^#`;
+        	if [ "$maxlogins" = "" ]; then
+                	echo 'add: *       hard    maxlogins       3';
+                	echo 'To /etc/security/limits.conf in order to limit max ssh logins';
+                	dosleep;
+        	fi
+	else
+        	echo 'Missing /etc/security/limits.conf';
+	fi
+fi
+
+#
+# zfs and mysql tmp dir appears that it can cause high IO under some situations
+# we can limit that with checksumming off and noexec can be done to stop common scripts from running
+#
+if [ -f /etc/my.cnf ]; then
+        if mountpoint -q /tmp; then
+                mysqlcheck=`grep ^tmpdir /etc/my.cnf`;
+                if [ "$mysqlcheck" = "" ]; then
+                        echo 'Missing recommended mysqltmpdir in /etc/my.cnf';
+                        echo
+                        echo "  ${green}mkdir -p /var/mysqltmpdir;chmod 755 /var/mysqltmpdir;chown mysql:mysql /var/mysqltmpdir${normal}"
+                        echo
+                        echo "add ${green}tmpdir=/var/mysqltmpdir${normal} under mysqld in /etc/my.cnf and run ${green}systemctl restart mysqld${normal}";
+                fi
+
+                if [ -x /usr/sbin/zfs ]; then
+                        echo
+                        echo 'Separate /tmp found';
+                        zfs_get vz/tmp
+                fi
+
+        else
+                echo '/tmp does not have a separate mount which is ok but has no noexec mount - skipping mysqltmpdir checks';
+        fi
+        dosleep;
+else
+        echo 'Missing /etc/my.cnf';
+fi
+
+#
+# we want to remove mlocate on large servers
+#
+
+if [ -e /usr/bin/updatedb.mlocate ]; then
+        echo " * ${cyan}updatedb / mlocate is installed${normal}";
+        echo 'This can cause high io and load on large systems. To remove run';
+        if [ -f /etc/redhat-release ]; then
+                echo " * ${green}yum remove mlocate${normal}";
+        else
+                echo " * ${green}apt remove mlocate${normal}";
+        fi
+fi
+dosleep;
+
+
+#
+# all tests
+#
+if [ "$1" = "all" ]; then
+	if [ -x /usr/sbin/zfs ]; then
+        	for zfs_mount in vz/admin vz/backup; do
+                	zfs_get $zfs_mount
+                	echo
+                	dosleep;
+        	done
+
+        	# only if jetbackup exists
+        	if [ -e /usr/bin/jetapps ]; then
+                	zfs_get vz/jetbackup
+                	echo
+                	dosleep;
+        	fi
+
+        	# only if imunify is installed
+        	if [ -e /usr/bin/imunify360-agent ]; then
+                	zfs_get vz/aibolit
+                	echo
+                	dosleep;
+        	fi
+
+        	log_check=`df -m | grep /var/log/httpd`;
+        	if [ "$log_check" = "" ]; then
+                	zfs_get vz/log
+                	echo
+                	dosleep;
+        	else
+                	zfs_get vz/httpd
+                	echo
+                	dosleep;
+        	fi
+	fi
+fi
+
+#
+# if jetbackup is in use da backup can skip homedir globally
+#
+if [ -x /usr/bin/jetapps ]; then
+        backup_check=`/usr/local/directadmin/directadmin c | grep skip_domains_in_backups | cut -d= -f2`;
+        if [ "$backup_check" = "0" ]; then
+                echo 'Jetbackup detected. Skip homedir in directadmin backups can be enabled globally';
+                echo "  ${green}/usr/local/directadmin/directadmin set skip_domains_in_backups 1 restart${normal}";
+        fi
+fi
+
+#
+# load check
+#
+loadcheck=`cat /proc/loadavg  | awk '{print $1}' | cut -d. -f1`;
+if [ "$loadcheck" -gt 30 ]; then
+        echo 'System load is high at ' $loadcheck;
+        if [ -f /usr/bin/imunify360-agent ]; then
+                echo 'Gathering imunify info this may take some time';
+                icheck=`imunify360-agent config show |  tr ' ' '\n' | grep -A 1 -i enable_scan_inotify | tail -n 1 | cut -d, -f1`;
+                if [ "$icheck" = "True" ]; then
+                        echo 'Disabling enable_scan_inotify can lower load on high load systems';
+                        echo "  ${green}imunify360-agent config update '{\"MALWARE_SCANNING\": {\"enable_scan_inotify\": false}}'${normal}";
+                fi
+        fi
+fi
+
+##
+## some update of exim made /usr/sbin/sendmail a folder not a symlink to /usr/sbin/exim
+##
+if [ ! -L /usr/sbin/sendmail ]; then
+	echo " * ${cyan} WARNING ${normal} /usr/sbin/sendmail should be a symlink to /usr/sbin/exim ";
+	sleep 2s;
+fi
+
+#
+# cron check
+#
+cron_check=`ps auxw | grep [/]usr/sbin/cron`;
+if [ "$cron_check" = "" ]; then
+        echo " * ${cyan} WARNING ${normal} cron is not running";
+        echo " * ${green}systemctl restart cron${normal}";
+	sleep 2s;
+fi
+
+if [ ! -f /etc/ssh/root ]; then
+        echo 'AuthorizedPrincipalsFile /etc/ssh/root does not exist (can be ignored on client servers)';
+        echo " * ${green}/admin/configs/ssh/setup_ssh_certs${normal}";
+fi
+
+if [ ! -f /etc/exim.authenticators.post.conf ]; then
+        echo " * ${cyan} WARNING ${normal}Mailbaby is not installed (can be ignored on client servers)";
+	echo
+	dosleep;
+
+	if [ -f /etc/exim.variables.conf ]; then
+		ipv6exim=`grep ^disable_ipv6= /etc/exim.variables.conf | cut -d= -f2`;
+		if [ "$ipv6exim" = "false" ]; then
+			echo " * ${cyan} IPV6 enabled in /etc/exim.variables.conf ${normal} - consider setting to ${green}disable_ipv6=true${normal}";
+		fi
+	fi
+
+else
+        if [ -f /etc/exim.transports.pre.conf ]; then
+                tcheck=`grep message_linelength_limit /etc/exim.transports.pre.conf`;
+                if [ "$tcheck" = "" ]; then
+                                echo " * ${cyan} WARNING ${normal} missing message_linelength_limit in exim.transports.pre.conf";
+                        echo " * ${green}echo "message_linelength_limit = 65536" >> /etc/exim.transports.pre.conf && systemctl restart exim${normal}";
+			dosleep;
+                fi
+        fi
+fi
+
+#
+# mail checks
+#
+if [ -f /etc/exim.routers.pre.conf ]; then
+	srsfix=`grep smart_route_forward /etc/exim.routers.pre.conf`;
+	if [ "$srsfix" = "" ]; then
+		echo " * ${cyan} WARNING ${normal} Missing directadmin srs fix";
+		echo " * ${green}/admin/intrelay fix${normal}  will resolve this on mailbaby systems";
+		dosleep;
+	fi
+
+	shorty=`hostname -s | cut -c1-3`;
+	if [ "$shorty" = "vda" ]; then
+		# had a 255.0.0.0 netmask once
+		nmcheck=`ifconfig eth0 | grep netmask | awk '{print $4}'`;
+		if [ "$nmcheck" = "255.0.0.0" -o "$nmcheck" = "255.255.0.0" ]; then
+			echo "	* ${cyan} WARNING ${normal} the netmask on eth0 is very wrong and $nmcheck";
+			dosleep;
+		fi
+
+		#soft check
+		if [ ! -f /usr/local/directadmin/plugins/softaculous/cron.php ]; then
+			echo " * ${cyan} NOTE ${normal} Missing softaculous on a VDA server";
+                        dosleep;
+		fi
+
+		if [ ! -f /usr/local/directadmin/data/admin/admin.list ]; then
+			echo " * ${cyan} WARNING ${normal} Missing /usr/local/directadmin/data/admin/admin.list";
+			dosleep;
+		else
+			admincheck=`cat /usr/local/directadmin/data/admin/admin.list | wc -l`;
+			if [ "$admincheck" -gt "1" ]; then
+				echo " * ${cyan} WARNING ${normal} MORE than one user in /usr/local/directadmin/data/admin/admin.list (blank space could be the cause)";
+				cat /usr/local/directadmin/data/admin/admin.list
+				dosleep;
+			fi
+		fi
+
+		if [ -f /root/.zerossl ]; then
+			echo " * ${cyan} WARNING ${normal} /root/.zerossl is set to force zerossl on the server. Zerossl is slower and recommended only on storage systems on vda directadmin systems";
+			dosleep;
+		fi
+
+		portcheck=`grep port /etc/exim.transports.pre.conf | grep port | cut -d= -f2 | awk '{print $1}' | head -n 1`;
+		if [ "$port" = "25" ]; then
+			echo " * ${cyan} WARNING ${normal} smart host port is 25 in /etc/exim.transports.pre.conf change both to 2525 and ensure 2525 is opened in csf.conf";
+			dosleep;
+		else
+			if [ -f /etc/csf/csf.conf ]; then
+				check2525=`grep ^TCP_OUT /etc/csf/csf.conf | grep "2525"`;
+				if [ "$check2525" = "" ]; then
+					echo " * ${cyan} WARNING ${normal} add 2525 to /etc/csf/csf.conf to enable outgoing port 2525 for smarthost";
+					dosleep;
+				fi
+			fi
+		fi
+	fi
+else
+	if [ ! "$shorty" = "sto" ]; then
+        	echo 'Missing /etc/exim.routers.pre.conf no smart host configured';
+	fi
+fi
+
+
+if [ "$shorty" = "sto" ]; then
+
+	if [ -f /var/lib/mlocate/mlocate.db ]; then
+	        echo "  * ${cyan} NOTE ${normal} /var/lib/mlocate/mlocate.db exists on a storage system this can get very large and mlocate should be removed";
+		du -sm /var/lib/mlocate/mlocate.db
+		dosleep;
+	fi
+
+	if [ ! -e /usr/bin/python ]; then
+		echo 'Missing /usr/bin/python on storage to fix ';
+		echo 'apt install python-is-python3';
+		dosleep;
+	fi
+
+	mycnfcheck=`grep ^sort_buffer_size /etc/my.cnf`;
+	if [ "$mycnfcheck" = "" ]; then
+		echo "	* ${cyan} NOTE ${normal} missing sort_buffer_size in /etc/my.cnf which can cause nextcloud errors";
+		echo '	See https://wiki.interserver.net/index.php/Nextcloud_login_error';
+		echo ' To fix add sort_buffer_size = 1M  to /etc/my.cnf';
+		dosleep;
+	fi
+
+	#soft check
+        if [ ! -f /usr/local/directadmin/plugins/softaculous/cron.php ]; then
+              echo " * ${cyan} NOTE ${normal} Missing softaculous on a VDA server";
+  	      dosleep;
+        fi
+
+	if [ -e /usr/sbin/zfs ]; then
+		compression=`zfs get -H compression -o value vz`;
+		if [ "$compression" = "lz4" ]; then
+			echo " * ${cyan} NOTE ${normal} compression is set to lz4 use a higher compression like gzip or zstd (on ubuntu 22)";
+			echo 'zfs set compression=gzip vz';
+			dosleep;
+		fi
+	else
+		echo '	Storage system detected but missing /usr/sbin/zfs in /admin/storage/tests/ssp ?';
+		dosleep;
+	fi
+	testdns=0;
+
+	if [ -e /usr/sbin/dovecot ]; then
+		echo " * ${cyan} WARNING ${normal} dovecot can be removed on a storage system (pop/imap)";
+		echo " * ${green}cd /usr/local/directadmin/custombuild; ./build set dovecot no; ./build remove_items${normal}";
+		dosleep;
+	fi
+
+	if [ -e /usr/bin/rspamd ]; then
+		echo " * ${cyan} WARNING ${normal} rspamd can be removed on a storage system (pop/imap)";
+		dosleep;
+	fi
+
+	oldcgroups=`ps auxw | grep [/]usr/sbin/cgrulesengd$`;
+	if [ ! "$oldcgroups" = "" ]; then
+		echo " * ${cyan} WARNING ${normal} old cgroups is enabled on storage systems. TO REMOVE";
+		echo " * ${green}touch /admin/.info/_nocgrules; /admin/storage/buildcgroup${normal}";
+                echo
+                dosleep;
+	fi
+	wscheck=`grep ^webserver= /usr/local/directadmin/custombuild/options.conf | cut -d= -f2`;
+	if [ "$wscheck" = "apache" ]; then
+		if [ -e /etc/redhat-release ]; then
+			if [ ! -f /usr/lib64/libyajl.so ]; then
+				echo " * ${cyan} WARNING ${normal} apache is running but yajl-devel is missing. This can break modsecurity";
+				echo 'To fix: yum -y install yajl-devel';
+				echo 'Note that almalinux-powertools repo is needed';
+				dosleep;
+			fi
+		fi
+		php1mode=`grep ^php1_mode= /usr/local/directadmin/custombuild/options.conf  | cut -d= -f2`;
+		if [ ! "$php1mode" = "fastcgi" ]; then
+			echo " * ${cyan} WARNING ${normal} fastcgi for phpX_mode is needed for bubblewrap to work this server as $php1mode";
+			dosleep;
+		else
+			# check for session.save path
+			# next cloud fix
+			for phpfolder in `ls /usr/local | egrep "^php[0-9]{2}"`; do
+				if [ "$phpfolder" = "" ]; then
+					echo "Error at $lineno - could not find php versions in /usr/local when doing a session.save path check";
+					dosleep;
+				else
+
+					#grep ^memory_limit /usr/local/php74/lib/php.ini | cut -dM -f1 | awk '{print $3}'
+					if [ -f /usr/local/$phpfolder/lib/php.ini ]; then
+						phpmemcheck=`grep ^memory_limit /usr/local/$phpfolder/lib/php.ini | cut -dM -f1 | awk '{print $3}'`;
+						if [ "$phpmemcheck" -lt 255 ]; then
+							echo " * ${cyan} WARNING ${normal} low memory limit set of $phpmemcheck in /usr/local/$phpfolder/lib/php.ini";
+							dosleep;
+						fi
+					else
+						echo " * ${cyan} WARNING ${normal} missing /usr/local/$phpfolder/lib/php.ini then /usr/local/$phpfolder exists";
+						dosleep;
+					fi
+					if [ ! -d /usr/local/$phpfolder/lib/php.conf.d ]; then
+						echo " * ${cyan} WARNING ${normal} missing /usr/local/$phpfolder/lib/php.conf.d";
+						dosleep;
+					else
+						if [ ! -f /usr/local/$phpfolder/lib/php.conf.d/100-session.ini ]; then
+							echo " * ${cyan} WARNING ${normal} Fast cgi set with out session save path include. To FIX";
+							echo "  ${green} echo "session.save_path = /tmp" > /usr/local/$phpfolder/lib/php.conf.d/100-session.ini${normal} ";
+							dosleep;
+						fi
+					fi
+				fi
+			done
+		fi
+
+		if [ -f /var/log/httpd/error_log ]; then
+			maxcheck=`grep MaxRequestWorkers /var/log/httpd/error_log | tail -n 10`;
+			if [ ! "$maxcheck" = "" ]; then
+				echo " * ${cyan} WARNING ${normal} APACHE has hit maxrequestworkers";
+				echo -e "${maxcheck}";
+				dosleep;
+			fi
+		fi
+	fi
+
+
+fi
+
+if [ -f /etc/exim.variables.conf ]; then
+	if [ -f /etc/exim.variables.conf.custom ]; then
+		custom=1;
+		delmax=`grep deliver_queue_load_max /etc/exim.variables.conf.custom | cut -d= -f2 | cut -d. -f1`;
+		if [ "$delmax" = "" ]; then
+			custom=0;
+			delmax=`grep deliver_queue_load_max /etc/exim.variables.conf | cut -d= -f2 | cut -d. -f1`;
+			if [ "$loadcheck" -gt "$delmax" ]; then
+		        	echo " * ${cyan} WARNING ${normal} load is higher than deliver_queue_load_max in /etc/exim.variables.conf so mail will be delayed on this server";
+				if [ "$custom" = "0" ]; then
+					echo 'echo "deliver_queue_load_max=100.00" >> /etc/exim.variables.conf.custom && systemctl restart exim'
+					dosleep;
+				else
+					echo 'Edit deliver_queue_load_max in /etc/exim.variables.conf.custom and systemctl restart exim to fix';
+					dosleep
+				fi
+			else
+				if [ "$loadcheck" -gt "8" -a "$delmax" = "10" ]; then
+					echo " * ${cyan} NOTE ${normal} the load is over 8 but not yet at 10 which is deliver_queue_load_max in /etc/exim.variables.conf";
+					echo 'You want want to run: echo "deliver_queue_load_max=20.00" >> /etc/exim.variables.conf.custom && systemctl restart exim';
+					dosleep;
+				fi
+			fi
+		fi
+	fi
+fi
+
+# quota set on the admin user can cause problems in a restore
+# lets warn if that happens
+if [ ! -e /usr/sbin/zfs ]; then
+	if [ -x /usr/local/bin/da ]; then
+		adminuser=`/usr/local/bin/da admin`;
+		if [ -x /usr/bin/quota ]; then
+			dirtycheckquota=`mount | grep quota`;
+			if [ "$dirtycheckquota" = "" ]; then
+				echo " * ${cyan} WARNING ${normal} No quotas appear set on the file system";
+				echo
+				dosleep;
+			else
+				checkquota=`/usr/bin/quota ${admin} | grep none$`;
+				if [ "$checkquota" = "" ]; then
+					echo " * ${cyan} WARNING ${normal} Quotas may be set on the directadmin admin user which can cause restore problems and backup problems";
+					/usr/bin/quota ${admin}
+                        		echo
+                        		dosleep;
+				else
+					echo 'Quotas are enabled and all checks pass';
+					echo
+				fi
+			fi
+		fi
+	fi
+fi
+
+#
+# check for missing files
+#
+for checkfile in /usr/bin/kcarectl /usr/sbin/csf /usr/bin/sudo /etc/cron.daily/fixquota; do
+	if [ ! -e $checkfile ]; then
+		echo " * ${cyan} WARNING ${normal} $checkfile is not installed";
+		echo
+        	dosleep;
+	fi
+done
+
+if [ ! -e /etc/cron.daily/upscripts ]; then
+	echo " * ${cyan} WARNING ${normal} /etc/cron.daily/upscripts does not exist (can be ignored on client servers)";
+        echo
+	echo "  ${green}ln -s /admin/upscripts /etc/cron.daily/upscripts${normal}  will resolve this on interserver system";
+	echo	
+        dosleep;
+fi
+
+#
+# files that should not exist
+#
+if [ -f /var/www/html/.htaccess ]; then
+	echo " * ${cyan} WARNING ${normal} /var/www/html/.htaccess exists - check the contents of this file";
+	dosleep;
+fi
+
+if [ -e /etc/cron.hourly/gcc.sh ]; then
+	echo " * ${cyan} CRITIAL ${normal} /etc/cron.hourly/gcc.sh is likely malware";
+	dosleep;
+fi
+
+# check for other root logins
+rootcheck=`grep :x:0: /etc/passwd | cut -d: -f1 | grep -v ^root$`;
+if [ ! "$rootcheck" = "" ]; then
+	echo " ** ${cyan} CRITIAL ${normal} there appears to be another root user besides root";
+	echo "$rootcheck - check /etc/passwd";
+        dosleep;
+fi
+
+#
+# find custom files
+#
+for customfile in /usr/local/directadmin/custombuild/custom/exim/Makefile; do
+	if [ -f $customfile ]; then
+		echo "Custom config check found $customfile";
+	fi
+done
+
+# do not install k9's on shared hosting
+if [ -f /usr/local/bin/k9s ]; then
+	 echo " * ${cyan} WARNING ${normal} /usr/local/bin/k9s is installed which is a manual install should not be on a directadmin system";
+	dosleep;
+fi
+
+# mysql 8.0 no longer provides replace
+if [ ! -e /usr/sbin/replace -a ! -e /usr/bin/replace -a ! -e /usr/local/bin/replace ]; then
+	echo " * ${cyan} WARNING ${normal} missing replace command";
+	echo "To fix run ${green}cp /admin/replace-linux /usr/bin/replace${normal}";
+	dosleep;
+fi
+
+# mysql bug
+if [ -e /usr/bin/mysql -o -e /usr/local/bin/mysql ]; then
+	mysqlver=`mysql -V | awk '{print $5}' | cut -d- -f1`;
+
+	# warn about crash in 10.6.9 (this is resolved in 10.6.10 10/11/2022
+	if [ "$mysqlver" = "10.6.9" ]; then
+		echo " * ${cyan} WARNING ${normal} MariaDB 10.6.9 has Frequent Data structure corruption in InnoDB after OOM (MDEV-29374) Resolved in 10.6.10"
+		dosleep;
+	fi
+fi
+if [ -x /usr/sbin/sysctl ]; then
+	twcheck=`sysctl -a | grep -i ^net.ipv4.tcp_tw_reuse | awk '{print $3}'`;
+	if [ "$twcheck" = "2" ]; then
+		echo " * ${cyan} WARNING ${normal} net.ipv4.tcp_tw_reuse is set to 2 which can cause ftp problems. To fix:";
+		echo "echo net.ipv4.tcp_tw_reuse = 0 >> /etc/sysctl.conf; sysctl -p";
+		dosleep;
+	fi
+fi
+
+if [ -x /usr/bin/lsof ]; then
+	ftpcheck=`lsof +c15 -n  -P  -i :21 | grep "*:21" | grep LISTEN | head -n 1 | awk '{print $1}'`;
+	if [ "$ftpcheck" = "" ]; then
+		echo " * ${cyan} WARNING ${normal} no ftp service detected on port 21";
+		dosleep;
+	else
+		if [ ! "$ftpcheck" = "pure-ftpd" ]; then
+			if [ ! "$shorty" = "sto" ]; then
+				echo "${cyan} NOTE ${normal} $ftpcheck is setup for ftp and normally it is pure-ftpd";
+				dosleep;
+			fi
+		fi
+	fi
+else
+	echo '	Install lsof for ftp check';
+fi
+
+if [ -e /usr/bin/spamd ]; then
+	spamdcheck=`grep ^spamd= /usr/local/directadmin/custombuild/options.conf | cut -d= -f2`;
+	if [ "$spamdcheck" = "spamassassin" ]; then
+		if [ ! -e /usr/bin/re2c ]; then
+			echo "${cyan} NOTE ${normal} missing re2c which is needed for sa-compile";
+			if [ -f /etc/redhat-release ]; then
+				echo '	To fix run: yum -y install re2c; sa-compile';
+			else
+				echo '  To fix run: apt -y install re2c; sa-compile';
+			fi
+			dosleep;
+			echo 'Checking spamassassin';
+			spamassassin --lint
+		fi
+
+		if [ -e /usr/bin/rspamd ]; then
+			echo "${cyan} WARN ${normal} /usr/local/directadmin/custombuild/options.conf has spamassassin set so rspamd can be uninstalled";
+			dosleep;
+		fi
+	else
+		echo "${cyan} WARN ${normal} spamd returned $spamdcheck in /usr/local/directadmin/custombuild/options.conf but /usr/bin/spamd exists";
+		dosleep;
+	fi
+fi
+
+#magick files can get big
+if [ -d /tmp ]; then
+	magickcheck=`ls /tmp | grep magick`;
+	if [ ! "$magickcheck" = "" ]; then
+		echo " * NOTE found magick files in /tmp which can get large...checking disk space on /tmp";
+		du -sm /tmp
+		dosleep;
+	fi
+else
+	echo " * ${cyan} WARN ${normal} /tmp did not pass verfication does it even exist?";
+	dosleep;
+fi
+
+#dnscheck
+if [ -x /usr/local/bin/da ]; then
+	if [ -x /usr/bin/dig ]; then
+		if [ "$testdns" = "1" ]; then
+			ns1=`da config | grep ^ns1= | cut -d= -f2`;
+			ns2=`da config | grep ^ns2= | cut -d= -f2`;
+			if [ "$ns1" = "" -o "$ns2" = "" ]; then
+				echo ' * dns not set in directadmin can not run dns checks. Set nameservers in admin level';
+			else
+				echo "Testing $ns1";
+				check1=`dig +short $ns1`;
+                        	if [ "$check1" = "" ]; then
+                                	echo " * ${cyan} WARN ${normal} ns1 is blank please create a dns entry at cloudflare and check nameserver glue";
+                                	dosleep;
+                        	else
+                                	printf "${check1}";
+					echo
+                        	fi
+
+				echo "Testing $ns2";
+				check2=`dig +short $ns2`;
+				if [ "$check2" = "" ]; then
+					echo " * ${cyan} WARN ${normal} ns2 is blank please create a dns entry at cloudflare and check nameserver glue";
+					dosleep;
+				else
+					printf "${check2}";
+					echo
+				fi
+			fi
+		fi
+	else
+		if [ -d /etc/debian_version ]; then
+			echo ' * run apt install bind9-dnsutils ';
+		else
+			echo ' * run yum install bind-utils';
+		fi
+		echo '  to install dig and run dns checks';
+	fi
+else
+	echo ' * update da version to run dns checks';
+fi
+
+
+#grep webmail /etc/httpd/conf/extra/httpd-includes.conf
+if [ -e /etc/httpd/conf/extra/httpd-includes.conf ]; then
+	checkwm=`grep webmail /etc/httpd/conf/extra/httpd-includes.conf`;
+	if [ ! "$checkwm" = "" ]; then
+		echo " * ${cyan} WARN ${normal} webmail urls in /etc/httpd/conf/extra/httpd-includes.conf may conflict with urls in /etc/httpd/conf/extra/httpd-alias.conf";
+		echo 'da maintains /etc/httpd/conf/extra/httpd-alias.conf but not /etc/httpd/conf/extra/httpd-includes.conf';
+		echo 'Relevant only if webmail urls do not work';
+		dosleep;
+	fi
+fi
+
+# add in all da checks here going forward
+if [ -e /usr/local/bin/da ]; then
+	mysqlducheck=`da config | grep ^show_db_usage | cut -d= -f2`;
+	if [ ! "$mysqlducheck" = "0" ]; then
+		echo " * ${cyan} NOTE ${normal} on a server with a lot of mysql tables mysql disk space usage may cause da_admin to reach max connections";
+		echo 'To fix: /usr/local/directadmin/directadmin set show_db_usage 0 && systemctl restart directadmin';
+		echo 'notes: https://www.directadmin.com/features.php?id=664';	
+	fi
+fi
+
+# screen does not work in jailshell
+# nor does tmux but dtach is a fix
+if [ -f /etc/debian_version ]; then
+	if [ -f /etc/netplan/00-installer-config.yaml ]; then
+		dhcpcheck=`grep "dhcp4: yes" /etc/netplan/00-installer-config.yaml`;
+		if [ ! "$dhcpcheck" = "" ]; then
+			echo " * ${cyan} NOTE ${normal} dhcp appears enabled in /etc/netplan/00-installer-config.yaml best to go static";
+			dosleep;
+		fi
+	fi
+
+	if [ -e /usr/bin/jailshell ]; then
+		if [ ! -e /usr/bin/dtach ]; then
+			echo " * ${cyan} NOTE ${normal} screen / tmux do not work in jailshell. Instead dtach can work";
+			echo 'To fix: apt install dtach';
+			echo 'Notes: https://wiki.archlinux.org/title/Dtach';
+ 			dosleep;
+		fi
+	fi
+
+	if [ -f /usr/lib64/dovecot/auth/lib_imunify360.so ]; then
+		if [ ! -L /usr/lib64/dovecot ]; then
+			echo " * ${cyan} NOTE ${normal} /usr/lib64/dovecot/auth/lib_imunify360.so exists which could cause pigeonhole to fail to compile "
+			echo 'See https://forum.directadmin.com/threads/dovecot-fails-to-update-using-custombuild.67695/';
+			echo 'To fix: mv /usr/lib64/dovecot/ /usr/lib64/dovecot.old; ln -s /usr/lib/dovecot /usr/lib64/dovecot';
+			dosleep;
+		fi
+	fi
+
+fi
+
+# awstat errors with out these
+if [ -f /etc/redhat-release ]; then
+	if [ ! -f /usr/share/perl5/vendor_perl/GeoIP2/Types.pm ]; then
+		echo " * ${cyan} NOTE ${normal} perl-GeoIP2 is missing which may break awstats";
+		echo 'To fix: yum -y install perl-GeoIP2';
+		dosleep;
+	fi
+
+	if [ ! -f /usr/share/perl5/vendor_perl/Data/Validate/IP.pm ]; then
+		echo " * ${cyan} NOTE ${normal} perl-Data-Validate-IP is missing which may break awstats";
+                echo 'To fix: yum -y install perl-Data-Validate-IP';
+		if [ -f /usr/sbin/cagefsctl ]; then
+			echo 'cagefsctl --addrpm perl-Data-Validate-IP; cagefsctl --force-update';
+		fi
+                dosleep;
+	fi
+
+	if [ ! -f /etc/rc.d/init.d/network ]; then
+		echo " * ${cyan} NOTE ${normal} missing network-scripts on almalinux/rhel based systems. To fix";
+		echo 'yum -y install network-scripts';
+		dosleep;
+	fi
+
+	if [ -f /etc/sysconfig/network-scripts/ifcfg-eth0 ]; then
+		dhcpcheck=`grep dhcp /etc/sysconfig/network-scripts/ifcfg-eth0`;
+		if [ ! "$dhcpcheck" = "" ]; then
+	                echo " * ${cyan} NOTE ${normal} dhcp is set in /etc/sysconfig/network-scripts/ifcfg-eth0 best to make it static";
+			dosleep;
+		fi
+	fi
+fi
+
+# check for common domains
+if [ -f /etc/virtual/domains ]; then
+	commoncheck=`grep -E "gmail.com|google.com|yahoo.com|interserver.net|interserver.com" /etc/virtual/domains`;
+	if [ ! "$commoncheck" = "" ]; then
+		echo
+		echo " * ${cyan} NOTE ${normal} a common domain is in /etc/virtual/domains and likely /etc/virtual/domainowners - please remove it";
+		echo "Domain(s) found: ";
+		printf "$commoncheck";
+		echo
+		dosleep;
+	fi
+fi
+
+# good to have composer
+if [ ! -e /usr/local/bin/composer ]; then
+	echo " * ${cyan} WARN ${normal} missing composer at /usr/local/bin/composer";
+	echo 'To fix run: /usr/local/directadmin/custombuild/build composer';
+	dosleep;
+fi
+
+if [ -e /usr/sbin/cagefsctl ]; then
+	if [ ! -x /usr/sbin/ifdown ]; then
+		echo " * ${cyan} NOTE ${normal} Missing legacy network-scripts";
+		echo 'To fix run: yum -y install network-scripts';
+		dosleep;
+	fi
+
+	if [ ! -e /usr/share/alt-mod-passenger ]; then
+		echo " * ${cyan} NOTE ${normal} Cloudlinux detected but with out passenger module: to fix";
+		echo 'yum -y install lvemanager lve-utils alt-mod-passenger';
+		dosleep;
+	fi
+
+	# once had account set ups on directadmin hung do to hook scripts in cl
+	clhookhang=`ps auxw | grep post_modify_user | wc -l`;
+	if [ "$clhookhang" -gt "2" ]; then
+		echo "	* ${cyan} NOTE ${normal} check for hung  post_modify_user / python3 processes account set ups may be hung";
+		ps auxw | grep post_modify_user | tail -n 10
+	fi
+
+else
+	dacagefscheck=`grep ^cagefs= /usr/local/directadmin/custombuild/options.conf  | cut -d= -f2`;
+	if [ "$dacagefscheck" = "yes" ]; then
+		echo " * ${cyan} WARN ${normal} cagefs is set to YES in options.conf but /usr/sbin/cagefsctl does NOT exist";
+		dosleep;
+	fi
+fi
+
+if [ ! -x /usr/sbin/chronyd ]; then
+	echo " * ${cyan} NOTE ${normal} missing chronyd";
+	if [ -f /etc/redhat-release ]; then
+		echo 'yum -y install chronyd; systemctl enable chronyd; systemctl start chronyd';
+	else
+		echo 'apt -y install chrony; systemctl enable chrony; systemctl start chrony';
+	fi
+	dosleep;
+fi
+
+# named-checkzone issues
+if [ -f /etc/sysconfig/named ]; then
+	namedcheck=`grep ^DISABLE_ZONE_CHECKING /etc/sysconfig/named`;
+	if [ "$namedcheck" = "" ]; then
+		echo " * ${cyan} NOTE ${normal} /etc/sysconfig/named does not have DISABLE_ZONE_CHECKING set to yes";
+		echo
+		echo "https://wiki.interserver.net/index.php/Bind_or_named_does_not_start for notes";
+		echo
+		echo "echo DISABLE_ZONE_CHECKING=\\\"YES\\\" >> /etc/sysconfig/named";
+	fi
+	mtzone=`find  /var/named -empty | grep -v slaves$`;
+	if [ ! "$mtzone" = "" ]; then
+		echo " * ${cyan} WARN ${normal} empty file in /var/named an empty zone could break bind start up";
+		 printf $mtzone;
+		dosleep;	
+	fi
+fi
+
+if [ -f /var/www/html/roundcube/logs/errors.log ]; then
+	rccheck=`tail -n 10 /var/www/html/roundcube/logs/errors.log | grep "Access denied"`;
+	if [ ! "$rccheck" = "" ]; then
+		echo " * ${cyan} WARN ${normal} access denied errors in /var/www/html/roundcube/logs/errors.log";
+		echo 'Reset da_roundcube user and password using /admin/storage/fixroundcube';
+		dosleep;	
+	fi
+fi
+
+if [ -f /var/log/directadmin/error.log ]; then
+	checkdaerr=`grep "Failed to write " /var/log/directadmin/error.log`;
+	if [ ! "$checkdaerr" = "" ]; then
+		echo " * ${cyan} WARNING ${normal} directadmin has run out of space on / in the past";
+		echo 'Consider a /tmp loop back mount or check disk space on /';
+		dosleep;
+	fi
+else
+	echo " * ${cyan} NOTE ${normal} missing /var/log/directadmin/error.log";
+	dosleep;
+fi
+
+if [[ -e /usr/local/bin/php || -L /usr/local/bin/php ]]; then
+	phpcheck=`ldd /usr/local/bin/php | grep "not found"`;
+	if [ ! "$phpcheck" = "" ]; then
+		echo "	*${cyan} WARNING ${normal} php library errors could be related to https://wiki.interserver.net/index.php/Directadmin_iconv";
+		echo
+		ldd /usr/local/bin/php
+		dosleep;
+	fi
+else
+	echo "	* NOTE - missing /usr/local/bin/php ?";
+	dosleep;
+fi
+
+if [ -f /usr/local/directadmin/custombuild/custom/php/configure.php74 ]; then
+	checkiconv=`grep iconv /usr/local/directadmin/custombuild/custom/php/configure.php74`;
+	if [ ! "$checkiconv" = "" ]; then
+		echo "	* WARNING /usr/local/directadmin/custombuild/custom/php/configure.php74 has iconv in a custombuild config this will fail in the future";
+		echo 'To fix: cp /admin/storage/config/php/configure.php74 /usr/local/directadmin/custombuild/custom/php/configure.php74';
+		echo
+		dosleep;
+	fi
+fi
+
+if [ -e /usr/sbin/proftpd ]; then
+	sftpcheck=`proftpd --list | grep -i sftp`;
+	if [ "$sftpcheck" = "" ]; then
+		echo '	* NOTE missing mod_sftp in proftpd https://wiki.interserver.net/index.php/Storage_packages#proftpd';
+		dosleep;
+	fi
+fi
+
+if [ -f /etc/logrotate.d/redis ]; then
+	if [ -f /etc/logrotate.d/redis-server ]; then
+		echo "	* WARNING both /etc/logrotate.d/redis and /etc/logrotate.d/redis-server exist";
+		echo "	**** on vda3400 this caused a duplicate logrotate rule breaking logrotate *** ";
+		systemctl status logrotate
+		dosleep;
+	fi
+fi
+
+if [ -f /etc/debian_version ]; then
+	if [ -f /etc/ssh/sshd_config ]; then
+		pwauth=`grep "^PasswordAuthentication yes$" /etc/ssh/sshd_config`;
+		if [ "$pwauth" = "" ]; then
+			echo "	* NOTE set explicit PasswordAuthentication yes in /etc/ssh/sshd_config otherwise password auth may be disabled";
+			dosleep;
+		fi
+	fi
+fi
+
+if [ -f /etc/passwd ]; then
+	if [ -f /etc/redhat-release ]; then
+		apachecheck=`grep ^apache: /etc/passwd | cut -d: -f6`;
+		if [ ! "$apachecheck" = "/var/www" ]; then
+			echo " * ${cyan} WARN ${normal} user apache does not have a homedir of /var/www - which may lead to odd errors";
+			echo "Saw this on a server where apache existed already, da was installed, user didn't change and it caused input file errors for php and phpmyadmin did not load - openlitespeed was a partial fix there";
+			dosleep;
+		fi
+	fi
+else
+	echo 'Woah I ran a test if /etc/passwd is a file and it failed';
+	dosleep;
+fi
+if [ -f /root/.ssh/authorized_keys2 -o -f /root/.ssh/authorized_keys ]; then
+	echo 'SSH checks can be ignored on client servers';
+	md5sum -c /admin/configs/ssh.md5
+fi
+
+#check for zabbix in csf.allow
+if [ -f /etc/csf/csf.allow ]; then
+	if [ ! -f /etc/csf/whitelist.txt ]; then
+		zabcheck=`grep 66.45.230.134 /etc/csf/csf.allow`;
+		if [ "$zabcheck" = "" ]; then
+			echo " * ${cyan} WARN ${normal} missing zabbix ip in /etc/csf/csf.allow";
+			echo "To fix: csf -a 66.45.230.134";
+			dosleep;
+		fi
+	fi
+fi

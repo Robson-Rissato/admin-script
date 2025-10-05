@@ -1,0 +1,715 @@
+#!/usr/bin/env bash
+
+# 0.08.02.2016
+
+###################################################
+#
+# Wordpress Command Line Tools
+# John Quaglieri <john@interserver.net>
+#
+# requires md5sum
+#
+###################################################
+
+
+#-
+# Copyright (c) 2016 InterServer, Inc.
+# All rights reserved.
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions
+# are met:
+# 1. Redistributions of source code must retain the above copyright
+#    notice, this list of conditions and the following disclaimer.
+# 2. Redistributions in binary form must reproduce the above copyright
+#    notice, this list of conditions and the following disclaimer in the
+#    documentation and/or other materials provided with the distribution.
+# 3. Neither the name of InterServer, Inc nor the names of its
+#    contributors may be used to endorse or promote products derived
+#    from this software without specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY INTERSERVER, INC. AND CONTRIBUTORS
+# ``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
+# TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+# PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE COMPANY OR CONTRIBUTORS
+# BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+# CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+# SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+# INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+# CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+# ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+# POSSIBILITY OF SUCH DAMAGE.
+#/
+
+# todo
+# list/update/reinstall plugins
+# clamscan and removal
+# backup wordpress (and to swift) - started
+# clean up auto scan
+# rename scan.txt
+# clamav binary needs to be off clamscan
+
+# basics
+
+WPAPI='api.wordpress.org';
+WPDOWNLOADS='downloads.wordpress.org';
+
+currentuser=`whoami`;
+currentdir=`pwd`;
+sudo=0;
+
+#colors
+blue=$(tput setaf 4)
+green=$(tput setaf 2)
+cyan=$(tput setaf 6)
+normal=$(tput sgr0)
+
+
+if [ "$currentuser" = "" ]; then
+	echo "Did not get current user at line $LINENO";
+	exit;
+elif [ "$currentuser" = "root" ]; then
+	echo "Running as root, sudo functions will be used";
+	sudo=1;
+else
+	echo "Running as user $currentuser";
+fi
+
+if [ -x /usr/bin/python ]; then
+	PYTHONPATH="/usr/bin/python";
+elif [ -x /usr/bin/python2 ]; then
+	PYTHONPATH="/usr/bin/python2";
+elif [ -x /usr/bin/python3 ]; then
+	PYTHONPATH="/usr/bin/python3";
+else
+	echo 'python not found';
+	exit;
+fi
+
+if [ -x /usr/bin/sudo ]; then
+	SUDOPATH="/usr/bin/sudo";
+elif [ -x /sbin/sudo ]; then
+	SUDOPATH="/sbin/sudo";
+else
+	echo "Did not find sudo at line $LINENO";
+	exit;
+fi
+
+if [ -x /bin/tar ]; then
+        TARPATH="/bin/tar";
+else
+        echo "Did not find tar at line $LINENO";
+        exit;
+fi
+
+if [ -x /usr/bin/wget ]; then
+        WGETPATH="/usr/bin/wget";
+else
+        echo "Did not find wget at line $LINENO";
+        exit;
+fi
+
+if [ -x /bin/grep ]; then
+        GREPPATH="/bin/grep";
+else
+        echo "Did not find grep at line $LINENO";
+        exit;
+fi
+
+if [ -x /usr/bin/find ]; then
+        FINDPATH="/usr/bin/find";
+elif [ -x /bin/find ]; then
+	FINDPATH="/bin/find";
+else
+        echo "Did not find wget at line $LINENO";
+        exit;
+fi
+
+if [ -x /bin/ls ]; then
+        LSPATH="/bin/ls";
+else
+        echo "Did not find ls at line $LINENO";
+        exit;
+fi
+
+if [ -x /bin/cat ]; then
+        CATPATH="/bin/cat";
+else
+        echo "Did not find cat at line $LINENO";
+        exit;
+fi
+
+if [ -x /usr/bin/curl ]; then
+        CURLPATH="/usr/bin/curl";
+else
+        echo "Did not find curl at line $LINENO";
+        exit;
+fi
+
+if [ -x /bin/rm ]; then
+        RMPATH="/bin/rm";
+else
+        echo "Did not find rm at line $LINENO";
+        exit;
+fi
+
+if [ -x /usr/bin/unzip ]; then
+        UNZIPPATH="/usr/bin/unzip";
+else
+        echo "Did not find unzip at line $LINENO";
+        exit;
+fi
+
+if [ -x /usr/bin/mysqldump ]; then
+	MYSQLDUMPPATH="/usr/bin/mysqldump";
+elif [ -x /usr/local/apps/mysql/bin/mysqldump ]; then
+	MYSQLDUMPPATH="/usr/local/apps/mysql/bin/mysqldump"
+elif [ -x /usr/local/bin/mysqldump ]; then
+	MYSQLDUMPPATH="/usr/local/bin/mysqldump"
+else
+	echo "Did not find mysqldump at line $LINENO";
+	exit;
+fi
+
+if [ -x /bin/chmod ]; then
+        CHMODPATH="/bin/chmod";
+else
+        echo "Did not find chmod at line $LINENO";
+        exit;
+fi
+
+if [ -x /usr/bin/tee ]; then
+	TEEPATH="/usr/bin/tee";
+else
+	echo "Did not find tee at line $LINENO";
+        exit;
+fi
+
+if [ -x /bin/chown ]; then
+        CHOWNPATH="/bin/chown";
+else
+        echo "Did not find chown at line $LINENO";
+        exit;
+fi
+
+
+
+# functions
+function verifypath() {
+
+	if [ "$1" = "" ]; then
+		echo "Error: verifypath lookup was blank at line $LINENO";
+		exit;
+	fi
+
+	if [ -f $1/wp-config.php ]; then
+		echo "Found $1/wp-config.php";
+	else
+		echo "$1/wp-config.php does not exist at line $LINENO";
+		exit;
+	fi
+}
+
+function getrunas() {
+	if [ "$1" = "" ]; then
+                echo "Error: getrunas lookup was blank at line $LINENO";
+                exit;
+        fi
+
+	if [ -f $1/wp-config.php ]; then
+		runas=`${LSPATH} -ld ${1}/wp-config.php | awk '{print $3}'`;
+		if [ "$runas" = "root" ]; then
+			echo "Error: Found ownership as user root for $1/wp-config.php at line $LINENO";	
+			exit;
+		elif [ "$runas" = "" ]; then
+			echo "Error: username came back blank at line $LINENO";
+			exit;
+		else
+			echo "Found user $runas";
+		fi
+	else
+                echo "$1/wp-config.php does not exist at line $LINENO";
+                exit;
+        fi
+
+}
+
+function verifywpconfig() {
+
+        if [ ! -f wp-config.php ]; then
+                echo "wp-config.php is not found in this directory, exiting at line $LINENO";
+                exit;
+        fi
+
+}
+
+function getwpplugindownloadlink() {
+
+	if [ "$1" = "" ]; then
+		echo 'no plugin passed in getwpplugindownloadlink at line $LINENO';
+		exit;
+	fi
+	PLUGINSEARCH=$1;
+	#echo "trying ${CURLPATH} -s https://${WPAPI}/plugins/info/1.0/${PLUGINSEARCH}.json and ${PYTHONPATH} -mjson.tool";
+	PLUGINDLURL=`${CURLPATH} -s "https://${WPAPI}/plugins/info/1.0/${PLUGINSEARCH}.json" | ${PYTHONPATH} -mjson.tool | ${GREPPATH} download_link  | ${GREPPATH}  ${WPDOWNLOADS} | cut -d: -f2- | cut -d\" -f2`;
+	#PLUGINDLURL=`${CURLPATH} -s "https://${WPAPI}/plugins/info/1.0/${PLUGINSEARCH}.json" | ${PYTHONPATH} -mjson.tool`;
+	if [ "${PLUGINDLURL}" = "" ]; then
+		echo "${PLUGINSEARCH} returned no wordpress plugin download url";
+		echo
+		return;
+	else
+		PLUGFILE=`echo $PLUGINDLURL | cut -d/ -f5`;
+		echo "Returned $PLUGINDLURL and file $PLUGFILE";
+		echo
+	fi
+}
+
+getmysqlfromwpconfig() {
+	if [ ! -f wp-config.php ]; then
+		echo 'Error: Did not find wp-config.php at line $LINENO in function getmysqlfromwpconfig';
+		exit;
+	fi
+
+	# returns all three cat wp-config.php | grep define\(\'DB_ | egrep "DB_NAME|DB_USER|DB_PASS" | cut -d\' -f
+	ARRAY=(`cat wp-config.php | grep define\(\'DB_ | egrep "DB_NAME|DB_USER|DB_PASS" | cut -d\' -f4`);
+	if [ "${ARRAY[0]}" = "" ]; then
+		echo "Returned blank mysql username at line $LINENO";
+		exit;
+	else
+		MYSQLUSER=${ARRAY[0]};
+
+	fi
+
+	if [ "${ARRAY[1]}" = "" ]; then
+		echo "Returned blank mysql db at line $LINENO";
+		exit;
+        else
+                MYSQLDB=${ARRAY[1]};
+
+        fi
+
+	if [ "${ARRAY[2]}" = "" ]; then
+		echo "Returned blank mysql password at line $LINENO";
+		exit;
+        else
+                MYSQLPASS=${ARRAY[2]};
+
+        fi
+}
+
+function findpostphp() {
+
+	  if [ "$1" = "" ]; then
+                MYPATH=`pwd`;
+        else
+
+                MYPATH=$1;
+        fi
+        verifypath ${MYPATH}
+
+        echo "Moving into ${MYPATH}";
+        cd ${MYPATH}
+
+        verifywpconfig
+
+	find $pwd -type f -name "*.php" | xargs grep  '.\{3000,\}' | grep chr
+}
+
+function findlong() {
+
+	if [ "$1" = "" ]; then
+                MYPATH=`pwd`;
+        else
+
+                MYPATH=$1;
+        fi
+        verifypath ${MYPATH}
+
+        echo "Moving into ${MYPATH}";
+        cd ${MYPATH}
+
+        verifywpconfig
+
+	find $pwd -type f -name "*.php" | xargs grep  '.\{15000,\}'
+	
+}
+
+function runabackup() {
+
+	if [ "$1" = "" ]; then
+		MYPATH=`pwd`;
+	else
+
+	        MYPATH=$1;
+	fi
+        verifypath ${MYPATH}
+
+        echo "Moving into ${MYPATH}";
+        cd ${MYPATH}
+
+
+        verifywpconfig
+
+        if [ "$sudo" = "1" ]; then
+		echo "backup functions call swift and run as root";
+        fi
+
+	# get mysqldump
+	getmysqlfromwpconfig
+
+	if [ -e ${MYSQLDB}.backup.sql ]; then
+		echo "Mysqldump file ${MYSQLDB}.backup.sql already exists at line $LINENO";
+		exit;
+	fi
+
+	 ${MYSQLDUMPPATH} -u ${MYSQLUSER} ${MYSQLDB} --password=${MYSQLPASS} > ${MYSQLDB}.backup.sql
+         ${CHMODPATH} 600 ${MYSQLDB}.backup.sql
+
+	if [ "$sudo" = "1" ]; then
+		getrunas ${MYPATH}
+		${CHOWNPATH} $runas:$runas ${MYSQLDB}.backup.sql
+	fi
+
+	backupfolder ${MYPATH} ${MYSQLDB}
+}
+
+function backupfolder() {
+        #get date
+        year=$(date +%Y)
+        month=$(date +%m)
+        day=$(date +%d)
+
+	if [ "$1" = "" ]; then
+		echo "got blank folder at line $LINENO in function backup folder";
+	fi
+
+	if [ "$2" = "" ]; then
+		echo "Got blank mysqluser at line $LINENO in function backup folder - this is used for naming only";
+	fi
+	if [ -e /root/.swift/hostname ]; then
+		CONTAINER=`cat /root/.swift/hostname`;
+	else
+		CONTAINER=`hostname`;
+	fi
+
+	/admin/swift/fly ${CONTAINER} ${MYPATH} frombackup ${MYSQLDB}-${year}-${month}-${day}
+}
+
+function wpupdateplugins() {
+ 
+       if [ "$1" = "" ]; then
+                MYPATH=`pwd`;
+        else
+
+                MYPATH=$1;
+        fi
+
+        verifypath ${MYPATH}
+
+        echo "Moving into ${MYPATH}";
+        cd ${MYPATH}
+
+
+        verifywpconfig
+
+	if [ "$sudo" = "1" ]; then
+		getrunas ${MYPATH}
+        fi
+
+
+	if [ ! -d wp-content/plugins ]; then
+		echo 'Did not find folder wp-content/plugins at line $LINENO';
+		exit;
+	fi
+	echo "Moving into plugin dir ";
+	cd wp-content/plugins
+
+	for wpplugdir in `${FINDPATH} . ! -path . -maxdepth 1 -type d | cut -d/ -f2`; do
+		echo "Working on plugin ${wpplugdir}";
+		getwpplugindownloadlink ${wpplugdir}
+		if [ ! "$PLUGINDLURL" = "" ]; then
+			if [ -e $PLUGFILE ]; then
+				echo "$PLUGFILE exists, can not continue";
+				return;
+			fi
+			if [ "$sudo" = "1" ]; then
+				${SUDOPATH} -u $runas $WGETPATH ${PLUGINDLURL}
+				${SUDOPATH} -u $runas $UNZIPPATH -o ${PLUGFILE}
+				${SUDOPATH} -u $runas $RMPATH ${PLUGFILE}
+
+			else
+				$WGETPATH ${PLUGINDLURL}
+                        	$UNZIPPATH -o ${PLUGFILE}
+                        	$RMPATH ${PLUGFILE}
+			fi
+			echo "Updated plugin";
+			echo
+		fi
+	done
+
+
+}
+
+function runscan() {
+
+        if [ "$1" = "" ]; then
+                MYPATH=`pwd`;
+	elif [ "$1" = "skip" ]; then
+		MYPATH=$1;
+        else
+
+                MYPATH=$1;
+        fi
+
+	if [ "$1" = "skip" ]; then
+		echo 'Skipping verify path check';
+	else
+        	verifypath ${MYPATH}
+
+        	echo "Moving into ${MYPATH}";
+        	cd ${MYPATH}
+	fi
+
+	if [ "$1" = "skip" ]; then
+		echo 'Skipping wp-config.php check';
+	else
+        	verifywpconfig
+	fi
+
+        if [ -f scan.txt ]; then
+                echo "scan.txt file found, remove first";
+                exit;
+        fi
+
+	/admin/clamscan shelldb > scan.txt	
+
+
+}
+
+
+function autoscan() {
+
+        if [ "$1" = "" ]; then
+                MYPATH=`pwd`;
+	elif [ "$1" = "skip" ]; then
+                MYPATH=$1;
+        else
+
+                MYPATH=$1;
+        fi
+
+	if [ "$1" = "skip" ]; then
+                echo 'Skipping verify path check';
+	else
+        	verifypath ${MYPATH}
+	fi
+
+	if [ "$sudo" = "1" ]; then
+		if [ "$1" = "skip" ]; then
+			if [ "$2" = "" ]; then
+				echo 'Running with skip. Must add username as second arg';
+				exit;
+			fi
+			runas=$2;
+		else
+	                getrunas ${MYPATH}
+		fi
+        fi
+
+        echo "Moving into ${MYPATH}";
+        cd ${MYPATH}
+
+	if [ "$1" = "skip" ]; then
+                echo 'Skipping wp-config.php check';
+        else
+                verifywpconfig
+        fi
+
+
+	if [ ! -f scan.txt ]; then
+		echo "No scan.txt file found, run clamscan first";
+		exit;
+	fi
+	
+	if [ -f fixmacro ]; then
+		echo 'Fixmacro file exists - auto removal will not be done';
+		sleep 2s;
+	fi
+
+        if [ "$sudo" = "1" ]; then
+		# clean up
+		# due to a brain fart I didn't need to place in the paths like cat/grep/etc... because I had say path as a variable d'oh - changed to mypath now
+		export PATH=/sbin:/usr/sbin:/usr/local/sbin:/bin:/usr/bin:/usr/local/bin
+		for i in `${SUDOPATH} -u $runas ${CATPATH} scan.txt | ${GREPPATH} malware.r | cut -d: -f1`; do if [ -f $i ]; then ${SUDOPATH} -u $runas /bin/rm -v $i; fi; done
+		for i in `${SUDOPATH} -u $runas ${CATPATH} scan.txt | ${GREPPATH} base64.v23au.186 | cut -d: -f1`; do if [ -f $i ]; then ${SUDOPATH} -u $runas /bin/rm -v $i; fi; done
+		for i in `${SUDOPATH} -u $runas ${CATPATH} scan.txt | ${GREPPATH} \{MD5\} | cut -d: -f1`; do if [ -f $i ]; then ${SUDOPATH} -u $runas /bin/rm -v $i; fi; done
+		for i in `${SUDOPATH} -u $runas ${CATPATH} scan.txt | ${GREPPATH} Atomicorp.PHP.Compromised.File | cut -d: -f1`; do if [ -f $i ]; then ${SUDOPATH} -u $runas /bin/rm -v $i; fi; done	
+		for i in `${SUDOPATH} -u $runas ${CATPATH} scan.txt | ${GREPPATH} -v Atomicorp.PHP.Compromised.File | ${GREPPATH} -v malware.r  | grep .suspected | cut -d: -f1`; do if [ -f $i ]; then ${SUDOPATH} -u $runas /bin/rm -v $i; fi; done
+		for i in `${SUDOPATH} -u $runas ${CATPATH} scan.txt | ${GREPPATH} -v Atomicorp.PHP.Compromised.File | ${GREPPATH} -v malware.r  | grep -v .suspected  | grep InterServer.MD5 | cut -d: -f1`; do if [ -f $i ]; then ${SUDOPATH} -u $runas /bin/rm -v $i; fi; done
+		for i in `${SUDOPATH} -u $runas ${CATPATH} scan.txt | ${GREPPATH} -v Atomicorp.PHP.Compromised.File | ${GREPPATH} -v malware.r  | grep -v .suspected  | grep -v InterServer.MD5 | grep -v JSQ | grep -v nav-m | grep Ob.Sh | cut -d: -f1`; do if [ -f $i ]; then ${SUDOPATH} -u $runas /bin/rm -v $i; fi; done
+		for i in `${SUDOPATH} -u $runas ${CATPATH} scan.txt | ${GREPPATH} -v Atomicorp.PHP.Compromised.File | ${GREPPATH} -v malware.r  | grep -v .suspected  | grep -v InterServer.MD5 | grep -v JSQ | grep -v nav-m | grep php.base64.v23au.185 | cut -d: -f1`; do if [ -f $i ]; then ${SUDOPATH} -u $runas /bin/rm -v $i; fi; done
+
+		for i in `${SUDOPATH} -u $runas ${CATPATH} scan.txt  | ${GREPPATH} -v Atomicorp.PHP.Compromised.File | ${GREPPATH} -v InterServer.MD5 | grep -v Ob.Shell | grep JSQ  | cut -d: -f1`; do ${SUDOPATH} -u $runas cat $i | grep -v encodeURIComponent > $i.new; done
+		for i in `${SUDOPATH} -u $runas ${CATPATH} scan.txt  | ${GREPPATH} -v Atomicorp.PHP.Compromised.File | ${GREPPATH} -v InterServer.MD5 | grep -v Ob.Shell | grep JSQ  | cut -d: -f1`; do ${SUDOPATH} -u $runas mv -v -f $i.new $i; done
+		sleep 2s;
+		echo "One liners";
+		for i in `${SUDOPATH} -u $runas cat scan.txt | grep /home | cut -d: -f1 | grep InterServer.broad.eval.space`; do if [ -f $i ]; then check=`${SUDOPATH} -u $runas cat $i | wc -l`; if [ "$check" = "0" ]; then ${SUDOPATH} -u $runas /bin/rm -v $i; fi; fi; done
+		sleep 2s;
+		# topline
+	 	if [ ! -f fixmacro ]; then
+			${SUDOPATH} -u $runas echo -e ":1/\$GLOBALS/s/^.*<?php/<?php/\n:x" > fixmacro			
+			for i in `${SUDOPATH} -u $runas ${CATPATH} scan.txt  | ${GREPPATH} -i InterServer.broad.hidden.eval | cut -d: -f1`; do ${SUDOPATH} -u $runas vi -s fixmacro $i; done
+			#CRYPT.topline.malware.insert
+			for i in `${SUDOPATH} -u $runas ${CATPATH} scan.txt  | ${GREPPATH} -i CRYPT.topline.malware.insert | cut -d: -f1`; do ${SUDOPATH} -u $runas vi -s fixmacro $i; done
+			#CRYPT.topline.insert
+                        for i in `${SUDOPATH} -u $runas ${CATPATH} scan.txt  | ${GREPPATH} -i CRYPT.topline.insert | cut -d: -f1`; do ${SUDOPATH} -u $runas vi -s fixmacro $i; done
+			#brute.bf1lic.187
+			for i in `${SUDOPATH} -u $runas ${CATPATH} scan.txt  | ${GREPPATH} -i brute.bf1lic.187 | cut -d: -f1`; do ${SUDOPATH} -u $runas vi -s fixmacro $i; done
+			/bin/rm -v fixmacro
+
+			${SUDOPATH} -u $runas echo -e ":1/eval/s/^.*$/<?php/\n:x" > fixmacro
+			for i in `${SUDOPATH} -u $runas ${CATPATH} scan.txt  | ${GREPPATH} -i InterServer.broad.hidden.eval | cut -d: -f1`; do ${SUDOPATH} -u $runas vi -s fixmacro $i; done
+                        for i in `${SUDOPATH} -u $runas ${CATPATH} scan.txt  | ${GREPPATH} -i CRYPT.topline.malware.insert | cut -d: -f1`; do ${SUDOPATH} -u $runas vi -s fixmacro $i; done
+			for i in `${SUDOPATH} -u $runas ${CATPATH} scan.txt  | ${GREPPATH} -i InterServer.broad.hidden.eval | cut -d: -f1`; do ${SUDOPATH} -u $runas vi -s fixmacro $i; done
+			/bin/rm -v fixmacro
+
+			#InterServer.topline.insert.rkgnmwxt
+			${SUDOPATH} -u $runas echo -e ":1/\$rkgnmwxt/s/^.*$/<?php/\n:x" > fixmacro
+			for i in `${SUDOPATH} -u $runas ${CATPATH} scan.txt  | ${GREPPATH} -i InterServer.topline.insert.rkgnmwxt | cut -d: -f1`; do ${SUDOPATH} -u $runas vi -s fixmacro $i; done
+                        /bin/rm -v fixmacro			
+
+			#php.cmdshell.FilesMan.243
+			${SUDOPATH} -u $runas echo -e ":1/\FilesMan/s/^.*$/<?php/\n:x" > fixmacro
+			for i in `${SUDOPATH} -u $runas ${CATPATH} scan.txt  | ${GREPPATH} -i php.cmdshell.FilesMan.243 | cut -d: -f1`; do ${SUDOPATH} -u $runas vi -s fixmacro $i; done
+			/bin/rm -v fixmacro
+
+			#sys_get_temp_dir
+			${SUDOPATH} -u $runas echo -e ":1/\sys_get_temp_dir/s/^.*<?php$/<?php/\n:x" > fixmacro
+			for i in `${SUDOPATH} -u $runas ${CATPATH} scan.txt  | ${GREPPATH} -i InterServer.broad.porn.redirect.insert.sys_get_temp_dir | cut -d: -f1`; do ${SUDOPATH} -u $runas vi -s fixmacro $i; done
+			/bin/rm -v fixmacro
+
+			#InterServer.broad.topline.insert.ziobids
+			#txkgmpf starts with this
+			${SUDOPATH} -u $runas echo -e ":1/\$txkgmpf/s/^.*$/<?php/\n:x" > fixmacro
+                        for i in `${SUDOPATH} -u $runas ${CATPATH} scan.txt  | ${GREPPATH} -i InterServer.broad.topline.insert.ziobids | cut -d: -f1`; do ${SUDOPATH} -u $runas vi -s fixmacro $i; done
+                        /bin/rm -v fixmacro
+
+		else
+			echo "Skipping topline clean because fixmacro file exists at line $LINENO";
+		sleep 3s;
+		fi
+		#end topline
+		for i in `${SUDOPATH} -u $runas ${CATPATH} scan.txt | grep -v base64.v23au.186 | grep -v InterServer.broad.topline.insert.ziobids | grep -v InterServer.topline.insert.rkgnmwxt | ${GREPPATH} -v \{MD5\} | ${GREPPATH} -v Atomicorp.PHP.Compromised.File | ${GREPPATH} -v InterServer.broad.porn.redirect.insert.sys_get_temp_dir | ${GREPPATH} -v CRYPT.topline.insert | ${GREPPATH} -v php.cmdshell.FilesMan.243 | ${GREPPATH} -v brute.bf1lic.187 | ${GREPPATH} broad.cookie.id  | cut -d: -f1`; do ${SUDOPATH} -u $runas replace "if \(isset\(\$_COOKIE\[\"id\"\]\)\) \@\$_COOKIE[\"user\"\]\(\$_COOKIE\[\"id\"\]\);" "" -- $i; done
+		for i in `${SUDOPATH} -u $runas ${CATPATH} scan.txt | grep -v base64.v23au.186 | grep -v InterServer.broad.topline.insert.ziobids | grep -v InterServer.topline.insert.rkgnmwxt | ${GREPPATH} -v \{MD5\} | ${GREPPATH} -v Atomicorp.PHP.Compromised.File | ${GREPPATH} -v InterServer.broad.porn.redirect.insert.sys_get_temp_dir | ${GREPPATH} -v CRYPT.topline.insert | ${GREPPATH} -v php.cmdshell.FilesMan.243 | ${GREPPATH} -v brute.bf1lic.187 | ${GREPPATH} -v broad.cookie.id | ${GREPPATH} -v malware.r  | ${GREPPATH} -v .suspected  | grep -v CRYPT.topline.malware.insert | grep -v InterServer.MD5 | ${GREPPATH} -v InterServer.broad.hidden.eval | grep -v JSQ | grep -v nav-m | grep -v Ob.Sh | grep preg | cut -d: -f1 | sort | uniq`; do if [ -f $i ]; then ${SUDOPATH} -u $runas nano $i; fi; done
+		for i in `${SUDOPATH} -u $runas ${CATPATH} scan.txt | grep -v base64.v23au.186 | grep -v InterServer.broad.topline.insert.ziobids  | grep -v InterServer.topline.insert.rkgnmwxt | ${GREPPATH} -v \{MD5\} | ${GREPPATH} -v Atomicorp.PHP.Compromised.File | ${GREPPATH} -v InterServer.broad.porn.redirect.insert.sys_get_temp_dir | ${GREPPATH} -v CRYPT.topline.insert | ${GREPPATH} -v php.cmdshell.FilesMan.243 | ${GREPPATH} -v brute.bf1lic.187 | ${GREPPATH} -v broad.cookie.id | ${GREPPATH} -v malware.r  | ${GREPPATH} -v .suspected  | grep -v CRYPT.topline.malware.insert | grep -v InterServer.MD5 | ${GREPPATH} -v InterServer.broad.hidden.eval | grep -v JSQ | grep -v nav-m | grep -v Ob.Sh | grep topline | cut -d: -f1 | sort | uniq`; do if [ -f $i ]; then ${SUDOPATH} -u $runas nano $i; fi; done
+		for i in `${SUDOPATH} -u $runas ${CATPATH} scan.txt | grep -v base64.v23au.186 | grep -v InterServer.broad.topline.insert.ziobids  | grep -v InterServer.topline.insert.rkgnmwxt | ${GREPPATH} -v \{MD5\} | ${GREPPATH} -v Atomicorp.PHP.Compromised.File | ${GREPPATH} -v InterServer.broad.porn.redirect.insert.sys_get_temp_dir | ${GREPPATH} -v CRYPT.topline.insert | ${GREPPATH} -v php.cmdshell.FilesMan.243 | ${GREPPATH} -v brute.bf1lic.187 | ${GREPPATH} -v broad.cookie.id | ${GREPPATH} -v malware.r  | ${GREPPATH} -v .suspected  | grep -v CRYPT.topline.malware.insert | grep -v InterServer.MD5 | ${GREPPATH} -v InterServer.broad.hidden.eval | grep -v preg | grep -v Ob.Sh | grep -v topline | grep .php | grep -v .zip | grep -v nav-m | grep -v JSQ | cut -d: -f1 | sort | uniq`; do if [ -f $i ]; then ${SUDOPATH} -u $runas nano $i; fi; done
+		
+	else
+
+		echo "Will not autoscan as root";
+        fi
+
+
+}
+
+function grepfiles() {
+
+        if [ "$1" = "" ]; then
+                MYPATH=`pwd`;
+        else
+
+                MYPATH=$1;
+        fi
+
+
+        verifypath ${MYPATH}
+
+	#wget -N http://mirror.trouble-free.net/exclude.txt && find | grep -v -f exclude.txt  | grep .php
+	if [ "$sudo" = "1" ]; then
+                getrunas ${MYPATH}
+        fi
+
+	echo "Moving into ${MYPATH}";
+        cd ${MYPATH}
+	verifywpconfig
+
+	if [ "$sudo" = "1" ]; then
+		${SUDOPATH} -u $runas ${WGETPATH} -N http://mirror.trouble-free.net/exclude.txt && ${SUDOPATH} -u $runas ${FINDPATH} | ${GREPPATH} -v -f exclude.txt  | ${GREPPATH} .php
+	else
+		${WGETPATH} -N http://mirror.trouble-free.net/exclude.txt && ${FINDPATH} | ${GREPPATH} -v -f exclude.txt  | ${GREPPATH} .php
+	fi
+}
+
+function update() {
+
+        if [ "$1" = "" ]; then
+                MYPATH=`pwd`;
+        else
+
+                MYPATH=$1;
+        fi
+
+
+	verifypath ${MYPATH}
+	if [ "$sudo" = "1" ]; then
+		getrunas ${MYPATH}
+	fi
+
+	echo "Moving into ${MYPATH}";
+	cd ${MYPATH}
+	verifywpconfig
+
+	echo
+	echo -n "${cyan}Continue with force wordpress update? ${normal} ";
+	read wait;
+	echo
+	if [ ! "$wait" = "y" ]; then
+		echo "Exiting";
+		exit;
+	fi
+ 
+	if [ "$sudo" = "1" ]; then
+ 		echo "Will update wordpress to the latest version in dir ${MYPATH}";
+		${SUDOPATH} -u $runas ${WGETPATH} -q http://wordpress.org/latest.tar.gz -O - | ${SUDOPATH} -u $runas ${TARPATH} --strip-components=1 -zxv
+		echo "Done";
+	else
+		${WGETPATH} -q http://wordpress.org/latest.tar.gz -O - | ${TARPATH} --strip-components=1 -zxv
+	fi
+}
+
+# commands
+
+# used to get incoming commands
+script=`basename $0`
+
+case "$script" in
+ isup)
+  update $1
+;;
+ auto)
+  autoscan $1
+ ;;
+ grep)
+  grepfiles $1
+;;
+ scan)
+  runscan $1
+;;
+ upplugins)
+ wpupdateplugins $1
+;;
+ backup)
+ runabackup $1
+;;
+ longlines)
+ findlong $1
+;;
+ postphp)
+ findpostphp $1
+;;
+  *)
+        echo 'Unknown call';
+  ;;
+ esac
+
+

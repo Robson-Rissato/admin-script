@@ -1,0 +1,327 @@
+#!/usr/bin/env bash
+
+# 7/19/2025
+# only block port 25 now un blocksmtp
+
+if [ ! "$1" = "outflood" -a ! "$1" = "ebflush" -a ! "$1" = "blockip" -a ! "$1" = "unblockip" -a ! "$1" = "highio" -a ! "$1" = "highioautolimit" -a ! "$1" = "fix" ]; then
+	if [ "$1" = "" -o "$2" = "" ]; then
+		echo 'Usage ./kvmenable tc|ebtables|ebflush|outflood|blocksmtp|blockip[ip]|unblockip[ip]|highio|highioautolimit|limitio kvmID|fix';
+		exit;
+	fi
+fi
+
+if [ ! -e /usr/bin/virsh ]; then
+	echo 'virsh not found';
+	echo "Run /admin/vzenable $*";
+	exit;
+fi
+
+# confirm vzid exists, except for outflood which does not need vzid
+if [ ! "$1" = "outflood" -a ! "$1" = "blockip" -a ! "$1" = "unblockip" -a ! "$1" = "ebflush" -a ! "$1" = "highio" -a ! "$1" = "highioautolimit" -a ! "$1" = "fix" ]; then
+
+	VZID=$2;
+
+	if [ ! -f /etc/libvirt/qemu/$VZID.xml ]; then
+		if [ -f /etc/libvirt/qemu/vps${VZID}.xml ]; then
+			VZID=vps${VZID};
+		elif [ -f /etc/libvirt/qemu/windows${VZID}.xml ]; then
+                        VZID=windows${VZID};
+		elif [ -f /etc/libvirt/qemu/linux${VZID}.xml ]; then
+                        VZID=linux${VZID};
+		elif [ -f /etc/libvirt/qemu/qs${VZID}.xml ]; then
+                        VZID=qs${VZID};
+		else
+			echo $VZID . 'does not exist';
+			exit;
+		fi
+	fi
+fi
+
+function getvnet {
+	vnet=`virsh dumpxml $1 | grep vnet | cut -d\' -f2`;
+	echo "Found vnet $vnet"
+}
+
+function highio {
+	if [ -e /usr/sbin/iotop ]; then
+		/usr/sbin/iotop -q -o -b -n 1 | grep qemu | awk '{print $14 " " $10 }'
+	else
+		echo 'iotop not found';
+	fi
+}
+
+
+function limitio {
+	echo "limiting $VZID";
+	vm=$VZID;
+	virsh blkiotune $vm --weight=100
+	if [ -e /cgroup/blkio/libvirt/qemu/$vm/blkio.throttle.read_bps_device ]; then
+		echo "Found cgroup for $vm";
+		dm=`file /dev/vz/$vm | cut -d/ -f5 | cut -d\' -f1`;
+		if [ -e /dev/$dm ]; then
+			device=`ls -l /dev/$dm  | cut -d" " -f5-6 | sed s#","#":"#g | tr -d '[:blank:]'`
+			echo "Found device $device";
+			echo "$device 2242880" > /cgroup/blkio/libvirt/qemu/$vm/blkio.throttle.read_bps_device
+			echo "$device 2242880" > /cgroup/blkio/libvirt/qemu/$vm/blkio.throttle.write_bps_device
+		else
+			echo "Did not find /dev/$dm";
+		fi
+	fi
+
+}
+
+function getipsfromid {
+	mainip=`cat /etc/dhcpd.vps  | grep $VZID | awk '{print $8}' | cut -d\; -f1 | grep .`
+	secondary=`cat /root/cpaneldirect/vps.ipmap | grep ^$mainip: | cut -d: -f2`;
+	if [ "$secondary" = "" ]; then
+		ips=$mainip;
+	else
+		ips="$mainip
+		$secondary";
+	fi
+	
+}
+
+function modp {
+	mod=$1;
+	if [ "$mod" = "" ]; then
+		echo 'No module passed';
+		return;
+	fi
+	check=`lsmod | grep $mod`;
+        if [ "$check" = "" ]; then
+               	echo 'Loading $mod. It will not reload on boot unless added to rc.local';
+               	modprobe $mod
+	else
+		echo "$mod already loaded"	
+        fi
+}
+
+function suspend {
+	virsh suspend $1
+}
+
+function resume {
+        virsh resume $1
+}
+
+
+case "$1" in
+ tc)
+	getvnet $VZID
+	tc -s qdisc ls dev $vnet
+ ;;
+ fix)
+ /root/cpaneldirect/provirted.phar rebuild-dhcp all; /root/cpaneldirect/provirted.phar vnc rebuild
+
+ if [ -x /etc/init.d/isc-dhcp-server ]; then 
+	/etc/init.d/isc-dhcp-server restart
+ fi
+
+ if [ "$2" = "all" ]; then
+	/root/cpaneldirect/vps_cron.sh
+ fi
+ ;;
+ ebtables)
+	if [ ! -e /sbin/zfs ]; then
+	 /scripts/buildebtablesrules  > /scripts/sh
+	 /scripts/sh
+	fi
+ ;;
+ ebflush)
+  if [ -x /usr/bin/virsh ]; then
+	if [ -x /scripts/ebflush_and_restart_libvirtd ]; then
+		/etc/init.d/xinetd stop
+		killall -9 xinetd
+		/scripts/ebflush_and_restart_libvirtd
+		/etc/init.d/xinetd start
+		/admin/kvmenable fix all
+	else
+		echo "missing /scripts/ebflush_and_restart_libvirtd";
+	fi
+  else
+	echo "Missing /usr/bin/virsh";
+  fi
+ ;;
+
+ highioautolimit)
+
+if [ -e /usr/sbin/iotop ]; then
+
+     datas=`iotop -q -o -b -n 1 | grep qemu | awk '{print $14 ":" $10 ":" $1 }'`;
+
+        for data in $datas; do
+                vm=`echo $data | cut -d":" -f1`;
+                # -gt doesn't like decimals
+                amount=`echo $data | cut -d":" -f2 | cut -d. -f1`;
+                pid=`echo $data | cut -d":" -f3`;
+
+                if [ "$vm" = "" ]; then
+                        echo 'ERROR: Returned blank data for VM';
+                        continue
+                fi
+
+                echo "Found vm $vm with amount $amount and pid $pid";
+
+		if [ "$2" = "all" ]; then
+			gt=0;
+		else
+			gt=25;
+		fi
+                if [ "${amount}" -gt "$gt" ]; then
+                        echo "VM $vm has high IO usage";
+                        echo "Limiting with ionice and blkiotune";
+
+                        ionice -c3 -p $pid
+                        virsh blkiotune $vm --weight=100
+
+			if [ -e /cgroup/blkio/libvirt/qemu/$vm/blkio.throttle.read_bps_device ]; then
+				echo "Found cgroup for $vm";
+				dm=`file /dev/vz/$vm | cut -d/ -f5 | cut -d\' -f1`
+				if [ -e /dev/$dm ]; then
+					device=`ls -l /dev/$dm  | cut -d" " -f5-6 | sed s#","#":"#g | tr -d '[:blank:]'`
+					echo "Found device $device";
+					echo "$device 5242880" > /cgroup/blkio/libvirt/qemu/$vm/blkio.throttle.read_bps_device
+					echo "$device 5242880" > /cgroup/blkio/libvirt/qemu/$vm/blkio.throttle.write_bps_device 
+				else
+					echo "Did not find /dev/$dm";
+				fi
+			fi
+                fi
+
+        done
+else
+	echo 'iotop not found';
+fi
+
+;;
+
+ blocksmtp)
+	getipsfromid $VZID
+	if [ "$ips" = "" ]; then
+		echo "Found no ips for $VZID. We have some error.";
+	else
+		for ip in $ips; do
+			echo "Blocking smtp on ip $ip for $VZID";
+			# this may not be needed any more
+			echo "1" > /proc/sys/net/ipv4/ip_forward
+
+			# we need this to block smtp
+			if [ -f /proc/sys/net/bridge/bridge-nf-call-iptables ]; then
+				echo "1" > /proc/sys/net/bridge/bridge-nf-call-iptables
+			fi
+
+			for port in 25; do
+				check=`iptables -L -n  | grep ${ip} | grep ${port}$`;
+				if [ "$check" = "" ]; then
+					iptables -I FORWARD --source $ip --protocol tcp --destination-port $port -j DROP
+				else
+					echo -n "$ip $port "
+					echo ' IP and port appear to be blocked already';
+				fi
+			done
+			mkdir -p /scripts/_tmp/smtp
+			touch /scripts/_tmp/smtp/$VZID
+		done
+	        touch /etc/unblocksmtp.conf /etc/blocksmtp.conf
+        	checksmtp=`grep ^${VZID}$ /etc/blocksmtp.conf`;
+        	if [ "$checksmtp" = "" ]; then
+                	echo $VZID >> /etc/blocksmtp.conf
+                	echo "Added $VZID to /etc/blocksmtp.conf";
+		else
+			echo "$VZID is already in /etc/blocksmtp.conf";
+        	fi
+		checkremove=`grep ^${VZID}$ /etc/unblocksmtp.conf`;
+		if [ "$checkremove" = "${VZID}" ]; then
+			sed --in-place "/${VZID}/d" /etc/unblocksmtp.conf
+			echo "Removed ${VZID} from /etc/unblocksmtp.conf";
+		fi
+	fi
+ ;;
+ unblocksmtp)
+	getipsfromid $VZID
+	if [ "$ips" = "" ]; then
+                echo "Found no ips for $VZID. We have some error.";
+        else
+                for ip in $ips; do
+                        echo "un Blocking smtp on ip $ip for $VZID";
+			for p in 25 465 587 3389; do
+				# we don't need to run it so may times but sometimes it has more than one rule
+                        	iptables -D FORWARD --source $ip --protocol tcp --destination-port $p -j DROP
+				iptables -D FORWARD --source $ip --protocol tcp --destination-port $p -j DROP
+				iptables -D FORWARD --source $ip --protocol tcp --destination-port $p -j DROP
+			done
+                done
+        fi
+	touch /etc/unblocksmtp.conf /etc/blocksmtp.conf
+	checksmtp=`grep ^${VZID}$ /etc/unblocksmtp.conf`;
+	if [ "$checksmtp" = "" ]; then
+		echo $VZID >> /etc/unblocksmtp.conf
+		echo "Added $VZID to /etc/unblocksmtp.conf";
+	else
+		echo "$VZID is already in /etc/unblocksmtp.conf";
+	fi
+
+	checkremove=`grep ^${VZID}$ /etc/blocksmtp.conf`;
+        if [ "$checkremove" = "${VZID}" ]; then
+                sed --in-place "/${VZID}/d" /etc/blocksmtp.conf
+	        echo "Removed ${VZID} from /etc/blocksmtp.conf";
+        fi
+
+	if [ -e /scripts/_tmp/smtp/$VZID ]; then
+		/bin/rm /scripts/_tmp/smtp/$VZID
+	fi
+
+
+ ;;
+
+ blockip)
+		echo "blocking $2"
+                iptables -I INPUT -s $2 -j DROP
+                iptables -I OUTPUT -s $2 -j DROP
+		iptables -I FORWARD -s $2 -j DROP
+
+		mkdir -p /scripts/_tmp/blockip
+		touch /scripts/_tmp/blockip/$2
+;;
+
+unblockip)
+
+		echo "blocking $2"
+                iptables -D INPUT -s $2 -j DROP
+                iptables -D OUTPUT -s $2 -j DROP
+                iptables -D FORWARD -s $2 -j DROP
+		/bin/rm /scripts/_tmp/blockip/$2
+;;
+
+ highio)
+ highio
+;;
+
+limitio)
+ limitio
+;;
+
+ outflood)
+
+	echo 'Baseline ping';
+	ping -c5 4.2.2.2
+	echo
+
+	vps_list=`/admin/includes/list_kvm_servers.sh`;
+
+	for vps in $vps_list; do
+		echo
+		echo "Woring on $vps";
+		suspend $vps
+		sleep 1s
+		ping -c 5 4.2.2.2
+		sleep 1s
+		resume $vps
+		echo
+	done
+  ;;		
+  *)
+        echo 'Unknown directive passed';
+ esac
+

@@ -1,0 +1,76 @@
+#!/bin/bash
+
+if [ ! -x /bin/cagefs.server ]; then
+	echo 'Requires /bin/cagefs.server';
+	exit;
+fi
+
+if [ ! -d /usr/local/cpanel ]; then
+	echo 'No cpanel';
+	exit;
+fi
+
+if [ ! -f /root/.swift/config ]; then
+	echo 'Requires /root/.swift/config';
+	exit;
+fi
+
+if [ ! -f /usr/local/lsws/bin/lswsctrl ]; then
+	echo '/usr/local/lsws/bin/lswsctrl does not exist';
+	exit;
+fi
+
+if [ -f /etc/apache2/conf.d/includes/pre_virtualhost_global.conf ]; then
+	if [ "$(grep .well-known /etc/apache2/conf.d/includes/pre_virtualhost_global.conf)" = "" ]; then
+		echo "Adding well-known block"
+		cat >> /etc/apache2/conf.d/includes/pre_virtualhost_global.conf <<EOF
+<IfModule Litespeed> 
+<Location "/.well-known">
+AllowOverride None
+php_flag engine off
+Options -ExecCGI -Indexes
+</Location>
+</IfModule>
+EOF
+		/usr/local/lsws/bin/lswsctrl restart
+		sleep 2s
+	else
+		echo 'well-known block exists in pre_virtualhost_global.conf';
+	fi
+
+	if [ "$(grep "^Include /etc/apache2/conf.d/includes/int.conf$" /etc/apache2/conf.d/includes/pre_virtualhost_global.conf)" = "" ]; then
+		echo "/etc/apache2/conf.d/includes/int.conf block"
+                cat >> /etc/apache2/conf.d/includes/pre_virtualhost_global.conf <<EOF
+Include /etc/apache2/conf.d/includes/int.conf
+EOF
+		touch /etc/apache2/conf.d/includes/int.conf
+		wget -O /etc/apache2/conf.d/includes/int.conf.new https://sigs.interserver.net/int.txt
+		if [ "$(grep "^#quags$" /etc/apache2/conf.d/includes/int.conf.new)" = "#quags" ]; then
+			mv -f /etc/apache2/conf.d/includes/int.conf.new /etc/apache2/conf.d/includes/int.conf
+	                /usr/local/lsws/bin/lswsctrl restart
+		else
+			echo '/etc/apache2/conf.d/includes/int.conf.new failed verification';
+			/bin/rm -v /etc/apache2/conf.d/includes/int.conf.new
+		fi
+                sleep 2s
+	else
+		echo 'int.conf exists';
+	fi
+fi
+
+if [ ! -f /etc/mail/spamassassin/INT.cf ]; then
+	echo 'Updating SPAM CONFIG';
+	/bin/cp -u /admin/configs/cpanel/INT.cf /etc/mail/spamassassin/INT.cf
+	/admin/configs/cpanel/update_sa_rules
+	
+else
+	echo 'INT.cf spam config exists';
+fi
+
+if [ ! -f /etc/apache2/conf.d/userdata/lscache_vhosts.conf ]; then
+	/admin/ls52_set_cache_root_policy.sh
+fi
+
+cp /admin/configs/etc_cl.selector_php.conf /etc/cl.selector/php.conf
+#cagefsctl --force-update
+#/usr/local/lsws/bin/lswsctrl restart

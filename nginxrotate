@@ -1,0 +1,9 @@
+#!/usr/bin/perl
+
+$file='/etc/cron.daily/logrotate';
+
+use Tie::File;
+tie @array, 'Tie::File', $file or die "can not open $file";
+unshift @array, "export TMPDIR=/var/run\n\n";
+untie @array;
+system('cp','-f','/admin/logrotate.nginx','/etc/logrotate.d/nginx');

@@ -1,0 +1,46 @@
+#!/bin/sh
+
+# 4.22.2007 - disable running queue on other ports
+
+if [ ! -e /etc/redhat-release ]; then
+	exit;
+fi
+
+if [ ! -e /usr/sbin/exim ]; then
+    echo 'Exim not installed';
+    exit;
+fi
+
+if [ ! -e /usr/bin/nc ]; then
+	echo 'NC not installed';
+	yum -y install nc
+fi
+
+function check()
+{
+   #lsof seems to mem/resource intensive
+   #check="$(/usr/sbin/lsof -i :$1)"
+   check="$(echo "QUIT" | /usr/bin/nc localhost $1 -w 20 | grep ^220)";
+}
+
+function start()
+{
+   /usr/sbin/exim -bd -oX $1
+   echo "Starting exim on port $1"
+}
+
+for port in 587 2500 25000; do
+    check $port
+    if [ "$check" = "" ]; then
+        start $port
+    fi
+done
+
+# eximssl
+check="$(netstat -an | grep 0.0.0.0 | grep 465 | grep LISTEN)";
+if [ "$check" = "" ]; then
+        echo "Starting SSL Exim";
+        export TMPDIR=/tmp
+        /usr/sbin/exim -tls-on-connect -bd -oX 465
+fi
+

@@ -1,0 +1,34 @@
+#!/bin/bash
+
+if [ "$1" = "" ]; then
+	echo 'Usage ./admin/cp_disable_fpm username';
+	exit;
+fi
+
+if [ ! -d /usr/local/cpanel ]; then
+	echo 'Missing /usr/local/cpanel';
+	exit;
+fi
+
+if [ -f /var/cpanel/users/$1 ]; then
+
+	export myuser=$1;
+	for i in `grep ": ${myuser}$" /etc/userdomains  | cut -d: -f1`; do
+		# get current php version
+		ver=`whmapi1 php_get_vhost_versions | grep -A 1 "domain: ${i}" | grep version | awk '{print $2}'`;
+		if [ "$ver" = "" ]; then
+			ver=`whmapi1 php_get_vhost_versions | grep -B 1 "vhost: ${i}" | grep version | awk '{print $2}'`;
+		fi
+		if  [[ "$ver" =~ ^ea-  ]] || [[ "$ver" == inherit ]] ; then
+			# disable fpm first
+			whmapi1 php_set_vhost_versions version=inherit vhost=$i
+			if [ ! "$ver" = "inherit" ]; then
+				whmapi1 php_set_vhost_versions version=$ver vhost=$i
+			fi
+		else
+			echo "could not determine php version got $ver";
+		fi
+	done
+else
+	echo '/var/cpanel/users/$1 does not exist';
+fi

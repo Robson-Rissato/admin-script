@@ -1,0 +1,8 @@
+NAME='balance';
+VERSION='3.34';
+MD5='65287da4757c3cd01dbc85551c144e49';
+EXT='tar.gz';
+DEPS='gcc gcc-c++';
+CONFIG='mkdir /usr/man && mkdir /usr/man1 && make clean';
+MAKE='make';
+MAKEINSTALL='make install';

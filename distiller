@@ -1,0 +1,15 @@
+#!/bin/sh
+
+# i am tired of looking up this command!!
+
+if [ "$1" = "userdata" ]; then
+	if [ -x /usr/local/cpanel/bin/userdata_update ]; then
+		echo 'Just updating /var/cpanel/userdata';
+		/usr/local/cpanel/bin/userdata_update
+	fi
+else
+	if [ -x /usr/local/cpanel/bin/apache_conf_distiller ]; then
+		/usr/local/cpanel/bin/apache_conf_distiller --update
+	fi
+fi
+

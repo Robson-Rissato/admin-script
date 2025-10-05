@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+
+#1/10/2025
+# install clamav from manage plugins but only supports rhel for now
+
+if [ ! -e /etc/redhat-release ]; then
+	echo "Requires redhat";
+	exit;
+fi
+
+if [ ! -e /usr/local/cpanel ]; then
+	echo "Requires cpanel";
+	exit;
+fi
+
+
+
+/admin/upscripts
+/admin/tmpwatch.sh
+/admin/remove_clam.sh run
+yum -y remove clamav clamav-db clamav-devel clamd
+
+if [ ! -e /usr/bin/nc ]; then
+	yum -y install nc
+fi
+# cPanel tickets ID# 4237665
+tmpcheck=`cat /etc/passwd | grep ^clamav: | cut -d: -f6`;
+if [ "$tmpcheck" = "/tmp" ]; then
+ echo "Warning /tmp set as homedir for user clamav"
+ if [ ! -e /usr/local/clamav ]; then
+  mkdir -p /usr/local/clamav
+  chown clamav:clamav /usr/local/clamav
+  usermod -d /usr/local/clamav clamav
+  echo "User modified";
+ else
+  echo '/usr/local/clamav already exists, no changes made';
+ fi
+fi
+
+/scripts/update_local_rpm_versions --edit target_settings.clamav installed
+/scripts/check_cpanel_pkgs --fix --targets=clamav

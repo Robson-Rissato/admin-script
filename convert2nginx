@@ -1,0 +1,253 @@
+#!/bin/sh
+
+# John Quaglieri
+# john@interserver.net
+# 2007
+# convert2nginx
+# convert2nginx yes all or convert2nginx yes hook
+# TODO DA support
+# to remove: delete /usr/local/nginx, /etc/logrotate.d/nginx, /scripts/legacypostwwwacct, nginx_monitor from cron and /etc/rc.d/rc.local startup of nginx
+
+if [ ! "$1" = "yes" ]; then
+	echo 'You need to look at the source and understand what this is doing';
+	exit;
+fi
+
+IP=`/admin/getmainip`;
+hostname=`/bin/hostname`;
+
+if [ ! "$2" = "hook" ]; then
+
+	# we have cpanel?
+	if [ ! -e /var/cpanel/users ]; then
+        	echo 'This was created to run on cpanel servers';
+        	exit;
+	fi
+
+
+	# check default location
+	if [ "$2" = "all" ]; then
+		/admin/upscripts
+		cd /admin/ports
+		./install nginx-stable
+	fi
+
+	if [ ! -e /usr/local/nginx/conf ]; then
+        	echo 'no nginx';
+        	exit;
+	fi
+fi
+
+# remove included virtual host file
+if [ -e /usr/local/nginx/conf/virtual.include ]; then
+        /bin/rm /usr/local/nginx/conf/virtual.include
+fi
+
+# create it
+touch /usr/local/nginx/conf/virtual.include
+
+if [ -e /usr/local/nginx/conf/nginx.conf ]; then
+	mv -f /usr/local/nginx/conf/nginx.conf /usr/local/nginx/conf/nginx.conf.old
+fi
+
+mkdir -p /var/www/nginx/tmp
+chown nobody:nobody -R /var/www/nginx
+
+cat > "/usr/local/nginx/conf/nginx.conf" <<EOF
+user  nobody;
+worker_processes  4;
+
+worker_rlimit_nofile  10240;
+
+events {
+    worker_connections  8192;
+        use epoll;
+}
+
+
+http {
+        server_names_hash_bucket_size 128;
+	 proxy_cache_path  /var/www/nginx levels=1:2 keys_zone=my-cache:32m max_size=1000m inactive=600m;
+  	 proxy_temp_path /var/www/nginx/tmp;
+
+
+    #include       conf/mime.types;
+    include       mime.types;
+    default_type  application/octet-stream;
+
+    sendfile        on;
+    #tcp_nopush     on;
+
+
+
+    keepalive_timeout  30;
+
+
+    gzip on;
+    gzip_min_length  1100;
+    gzip_buffers     4 32k;
+    gzip_types       text/plain text/html application/x-javascript text/xml text/css;
+    ignore_invalid_headers    on;
+
+    client_header_timeout  3m;
+    client_body_timeout    3m;
+    send_timeout           3m;
+    connection_pool_size        256;
+    client_header_buffer_size    1k;
+    large_client_header_buffers    8 512k;
+    request_pool_size        4k;
+    output_buffers   4 32k;
+    postpone_output  1460;
+    tcp_nopush             on;
+    tcp_nodelay            on;
+
+
+
+server {
+        access_log off;
+        listen       80;
+        server_name  $hostname;
+
+        location /
+        {
+
+
+        location ~ /\.ht {
+          deny all;
+        }
+
+
+        location ~* ^.+.(jpg|jpeg|gif|png|ico|zip|tgz|gz|rar|bz2|iso|doc|xls|exe|pdf|ppt|txt|tar|mid|midi|wav|bmp|rtf|mp3|ogv|ogg|flv|swf|mpeg|mpg|mpeg4|mp4|avi|wmv|js|css)$ {
+        expires 24h;
+                root /usr/local/apache/htdocs;
+        }
+
+            client_max_body_size       10m;
+            client_body_buffer_size    128k;
+
+            proxy_send_timeout         90;
+            proxy_read_timeout         90;
+
+            proxy_buffer_size          4k;
+            proxy_buffers              4 32k;
+            proxy_busy_buffers_size    64k;
+            proxy_temp_file_write_size 64k;
+
+            proxy_connect_timeout 30s;
+            proxy_redirect     off;
+
+                proxy_redirect  http://$hostname:81   http://$hostname;
+
+                proxy_pass   http://$hostname:81;
+
+            proxy_set_header   Host             \$host;
+            proxy_set_header   X-Real-IP        \$remote_addr;
+            proxy_set_header   X-Forwarded-For  \$proxy_add_x_forwarded_for;
+
+        }
+	
+
+    }
+
+
+        include "/usr/local/nginx/conf/virtual.include";
+
+}
+
+EOF
+
+
+
+## REMOVE ME
+if [ ! "$2" = "all" ]; then
+	exit;
+fi
+
+check=`cat /var/cpanel/cpanel.config | grep ^apache_port=`;
+if [ "$check" = "" ]; then
+	echo apache_port=0.0.0.0:81 >> /var/cpanel/cpanel.config
+else
+/admin/replace-linux apache_port=0.0.0.0:80 apache_port=0.0.0.0:81 -- /var/cpanel/cpanel.config
+fi
+
+/admin/nginxvhostconvert yes hosts
+
+/admin/updatetweak
+/usr/local/cpanel/bin/build_apache_conf
+/admin/res httpd
+
+
+if [ -e /etc/rc.d/rc.local ]; then
+	if [ -e /proc/vz ]; then
+		check=`cat /etc/rc.d/rc.local | grep /scripts/legacypostwwwacct`;
+		if [ "$check" = "" ]; then
+			echo "/scripts/legacypostwwwacct" >> /etc/rc.d/rc.local
+		fi
+	fi
+	check=`cat /etc/rc.d/rc.local | grep /admin/nginx_monitor.sh`;
+	if [ "$check" = "" ]; then
+		echo "/admin/nginx_monitor.sh" >> /etc/rc.d/rc.local
+	fi
+else
+	echo "Unable to find /etc/rc.d/rc.local";
+fi
+
+if [ ! -f /etc/chkserv.d/nginx ]; then
+	echo "service[nginx]=x,x,x,killall nginx;/usr/local/nginx/sbin/nginx,nginx,root" > /etc/chkserv.d/nginx
+	echo "nginx=1" >> /etc/chkserv.d/chkservd.conf
+	/scripts/restartsrv_chkservd
+fi
+
+if [ -e /scripts/legacypostwwwacct ]; then
+	mv /scripts/legacypostwwwacct /scripts/legacypostwwwacct.old
+fi
+
+#rebuild vhosts
+cat > "/scripts/legacypostwwwacct" <<EOF
+
+#!/bin/bash
+
+/admin/nginxvhostconvert yes hosts
+killall -HUP nginx
+
+EOF
+
+cat > "/etc/cron.d/nginxmonitor.sh" <<EOF
+
+SHELL=/bin/sh
+*/2 * * * * root /admin/nginx_monitor.sh >/dev/null 2>&1
+
+EOF
+
+chmod +x /scripts/legacypostwwwacct
+
+/admin/nginxrotate
+cd /admin/ports
+./install mod_rpaf
+
+/usr/local/nginx/sbin/nginx
+
+cat << EOF
+
+LoadModule rpaf_module        modules/mod_rpaf-2.0.so
+<IfModule mod_rpaf-2.0.c>
+RPAFenable On
+# Enable reverse proxy add forward
+RPAFproxy_ips 127.0.0.1 10.0.0.1
+# which ips are forwarding requests to us
+RPAFsethostname On
+# let rpaf update vhost settings 
+# allows to have the same hostnames as in the "real"
+# configuration for the forwarding Apache
+RPAFheader X-Forwarded-For
+# Allows you to change which header mod_rpaf looks
+# for when trying to find the ip the that is forwarding
+# our requests
+</IfModule>
+
+EOF
+
+echo "created /etc/cron.d/nginxmonitor.sh and changes made to /etc/rc.d/rc.local";
+echo
+echo "Need to configure mod_rpaf and remove fileprotect with /scripts/disablefileprotect";
+echo

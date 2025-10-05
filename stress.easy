@@ -1,0 +1,9 @@
+#!/bin/sh
+
+if [ -e /usr/local/bin/stress ]; then
+	echo "This should bring your server load to about 10, starting in 2 seconds";
+	sleep 2s;
+	/usr/local/bin/stress --cpu 10 --io 10 --vm 10 --vm-bytes 128M -d 10 --hdd-bytes 512000 --timeout 60s
+else
+	echo 'Stress not found.';
+fi

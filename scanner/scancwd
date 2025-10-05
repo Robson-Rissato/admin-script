@@ -1,0 +1,83 @@
+#!/bin/bash
+
+echo 'Scancwd';
+
+imunifyc=`ps auxw | grep [i]munify-realtime-av$`;
+if [ ! "$imunifyc" = "" ]; then
+        echo 'Exiting due to imunify-realtime-av';
+        exit;
+fi
+
+
+rescan=0;
+IFS="
+"
+
+# colors
+green=$(tput setaf 2)
+red=$(tput setaf 1)
+normal=$(tput sgr0)
+totalscanskipped=0;
+
+myCWD=$(pwd);
+
+if [ ! -d /usr/local/cpanel ]; then
+        echo 'For cpanel only';
+        exit;
+fi
+
+if [ ! -f /var/log/exim_mainlog ]; then
+        echo 'Did not find /var/log/exim_mainlog';
+fi
+
+lastscanned="/root/tmp/_cwdlastscan";
+thisrunscanned="/root/tmp/_cwdthisscan";
+
+if [ -f $thisrunscanned ]; then
+        mv -f -v $thisrunscanned $lastscanned
+fi
+
+function get_dirs()
+{
+		# this now properly handles spaces
+		#sed 's/[ \t]*$//' remove trailing spaces only
+                alldirstoscan=$(tail -n 5000 /var/log/exim_mainlog | grep cwd=/home | awk -F "[0-9]* args:" '{print $1}' | cut -d= -f2 | sed 's/[ \t]*$//');
+}
+
+function run()
+{
+        for dirstoscan in $alldirstoscan; do
+                echo -n 'Found ';
+                echo "$dirstoscan ";
+                if [ -d "$dirstoscan" ]; then
+                        if [ -f $lastscanned ]; then
+                                lastscancheck=$(grep "^${dirstoscan}$" $lastscanned)
+                                if [ ! "$lastscancheck" = "" ]; then
+                                        totalscanskipped=$(expr $totalscanskipped + 1)
+                                        echo "Skipping scanning ${dirstoscan} due to a previous scan";
+                                        #skip again
+                                        echo "${dirstoscan}" >> $thisrunscanned;
+                                        echo "Total skipped scans ${green}$totalscanskipped${normal}";
+                                        echo
+                                        continue;
+                                fi
+                        fi
+
+                        homecheck=$(grep ":${dirstoscan}:" /etc/passwd);
+                        if [ "$homecheck" = "" ]; then
+                                cd "${dirstoscan}"
+                                /admin/clamscan justdb q norecursive
+                                echo "${dirstoscan}" >> $thisrunscanned;
+                        else
+                                echo 'Skipping due to homedir match';
+                        fi
+                else
+			echo -n "$dirstoscan"
+                        echo ' is not a directory we must have a space';
+                fi
+        done
+}
+
+
+get_dirs
+run

@@ -1,0 +1,93 @@
+#!/usr/bin/env bash
+
+# sanity check
+
+if [ ! -f /etc/ssh/sshd_config ]; then
+	echo 'No sshd_config';
+	exit;
+fi
+
+if [ -f /etc/ssh/root ]; then
+	echo 'AuthorizedPrincipalsFile /etc/ssh/root exists already';
+	exit;
+fi
+
+check=`egrep "^TrustedUserCAKeys|^AuthorizedPrincipalsFile|^TrustedUserCAKeys" /etc/ssh/sshd_config`;
+if [ ! $check = "" ]; then
+	echo 'ssd_config appears to be set up already';
+	exit;
+fi
+
+if [ ! -f /etc/ssh/ssh_host_ed25519_key-cert.pub ]; then
+	echo '/etc/ssh/ssh_host_ed25519_key-cert.pub must be signed first';
+	exit;
+fi
+
+echo 'Starting ssh cert set up';
+
+principle=`hostname | cut -d. -f1`;
+echo "Singing for SERVER: $principle - if this is the wrong hostname please reset it first";
+echo
+sleep 1;
+echo "Using principle $principle and super";
+
+echo -n "add a second? (enter to skip, only one supported ie database|development|webhosting|kvm|openvz|openvzhostnode|qs|openvzhostnode|storage) "
+read wait
+
+touch /etc/ssh/root
+if [ ! -f /etc/ssh/root ]; then
+	echo 'Error /etc/ssh/root is not a file';
+	exit;
+fi
+
+cp /admin/configs/ssh/tech_cakey.pub /etc/ssh/tech_cakey.pub
+
+echo $principle > /etc/ssh/root
+echo super >> /etc/ssh/root
+
+
+if [ ! "$wait" = "" ]; then
+	echo "adding in $wait as principle";
+	echo $wait >> /etc/ssh/root
+fi
+
+cat >> /etc/ssh/sshd_config <<EOF
+#certs
+HostCertificate /etc/ssh/ssh_host_ed25519_key-cert.pub
+TrustedUserCAKeys /etc/ssh/tech_cakey.pub
+AuthorizedPrincipalsFile /etc/ssh/root
+#end ssh config
+EOF
+
+/admin/configs/ssh/sshkeyme
+
+
+check1=`grep 174.138.183.218 /etc/ssh/sshd_config`
+if [ "$check1" = "" ]; then
+	echo 'replacing 66.45.228.251 with 66.45.228.251 and 174.138.183.218 in sshd config';
+	/admin/replace-linux "AllowUsers root@66.45.228.251" "AllowUsers root@66.45.228.251 root@174.138.183.218" -- /etc/ssh/sshd_config
+fi
+
+if [ -f /etc/hosts.allow ]; then
+	check=`grep 174.138.183.218 /etc/hosts.allow`; 
+	if [ "$check" = "" ]; then
+		echo 'Adding 174.138.183.218 to /etc/hosts.allow';
+		echo "sshd: 174.138.183.218" >> /etc/hosts.allow
+	fi
+fi
+if [ -x /usr/bin/systemctl ]; then
+	/usr/bin/systemctl stop sshd.service
+	/usr/bin/systemctl start sshd.service
+	echo "Restarting ssh";
+elif [ -x /bin/systemctl ]; then
+	/bin/systemctl stop sshd.service
+	/bin/systemctl start sshd.service
+elif [ -x /etc/init.d/sshd ]; then
+	/etc/init.d/sshd restart
+	echo "Restarting ssh";
+elif [ -x /etc/rc.d/sshd ]; then
+	/etc/rc.d/sshd restart
+	echo "Restarting ssh";
+else
+	echo 'You need to restart ssh';
+fi

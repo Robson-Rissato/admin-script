@@ -1,0 +1,1021 @@
+#!/usr/bin/env bash
+
+if [ "$COLORS" = "" ]; then
+        blue=$(tput setaf 4)
+        green=$(tput setaf 2)
+        cyan=$(tput setaf 6)
+        yellow=$(tput setaf 3)
+        red=$(tput setaf 1)
+        normal=$(tput sgr0)
+fi
+
+# Check options
+if [ "$1" = "check" ] || [ "$1" = "checklist" ]; then
+    # Run checklist
+    echo -e "\n${cyan}Running final checklist...${normal}"
+    printf "%-26s\n" "-" | sed 's/\s/-/g'
+    printf 'Hyperthreading: %-8s%s'; sed -e s/1/${green}ENABLED${normal}/ -e s/0/${red}DISABLED${normal}/ /sys/devices/system/cpu/smt/active
+    printf 'Virtualization: %-8s%s'; if [ ! -e /dev/kvm ]; then echo "${red}DISABLED${normal}"; else echo "${green}ENABLED${normal}"; fi
+    if [ "$(sensors | grep Package)" ]; then
+        printf 'CPU temperature: %-7s%s'; sensors | grep Package | awk '{print $4}' | tr -d "+" | head -1 | cut -c1-2 | awk '{ if ($1 >= 75 && $1 < 94) printf ("%s%s%s\n", "'"$red"'", "'"HOT"'", "'"$normal"'"); else if ($1 > 93) printf ("%s%s%s\n","'"$red"'", "'"VERY HOT"'", "'"$normal"'"); else printf ("%s%s%s\n", "'"$green"'", "'"GOOD"'", "'"$normal"'"); }';
+    fi
+    if [ -x "$(command -v getenforce)" ]; then
+    printf 'SELinux: %-15s%s'; getenforce | sed -e s/Disabled/${red}DISABLED${normal}/ -e s/Enforcing/${green}ENFORCING${normal}/ -e s/Permissive/${yellow}PERMISSIVE${normal}/
+    fi
+    printf 'IPv6: %-18s%s'; sed -e s/0/${green}ENABLED${normal}/ -e s/1/${red}DISABLED${normal}/ /sys/module/ipv6/parameters/disable
+    if [ -x /bin/ping ]; then
+        for site in "Cloudflare:1.1.1.1" "Google:8.8.8.8" "Level3:4.2.2.2" "Mirror:mirror.trouble-free.net"; do
+            name=$(echo "$site" | cut -d: -f1)
+            addr=$(echo "$site" | cut -d: -f2)
+            if ping "$addr" -c 2 > /dev/null 2>&1; then
+                status="${green}GOOD${normal}"
+            else
+                status="${red}oh nooooo${normal}"
+            fi
+            printf "%-23s %s\n" "${name} PING:" "$status"
+        done
+    else
+        echo 'Missing /bin/ping'
+    fi
+    echo -e "\n\n"
+exit;
+fi
+
+
+if [ "$1" = "memory" ] || [ "$1" = "-m" ]; then
+    # Get maximum capacity of the physical memory array
+    max_capacity=$(dmidecode -t memory | grep -A5 "Physical Memory Array" | awk -F': ' '/Maximum Capacity/{print $2}' | head -1)
+
+    # Get installed memory size
+    memory_size=$(dmidecode -t 17 | grep -A5 "Memory Device$" | grep Size | grep -v "No Module Installed" | awk '{if ($3 ~ /MB/) print $2/1024; else print $2}' | awk '{sum+=$1} END {print (sum)}' | awk '{print int($0)}')
+
+    # Get motherboard model
+    motherboard_model=$(dmidecode -s baseboard-product-name | tail -1)
+
+    # Calculate the length of the motherboard model
+    motherboard_length=${#motherboard_model}
+
+    # Calculate the length of the longest line
+    header_line_length=$((motherboard_length + 23))
+    max_capacity_line_length=$(( ${#max_capacity} + 24 ))
+    memory_size_line_length=$(( ${#memory_size} + 24 ))
+    longest_line_length=$(( header_line_length > max_capacity_line_length ? header_line_length : max_capacity_line_length ))
+    longest_line_length=$(( longest_line_length > memory_size_line_length ? longest_line_length : memory_size_line_length ))
+    line=$(printf '═%.0s' $(seq 1 "$longest_line_length"))
+
+    # Print top border
+    printf "╔%s╗\n" "$line"
+
+    # Print motherboard model with cyan color and border
+    printf "║ %-$(($longest_line_length-4))s ║\n" "${cyan}Motherboard Model:   $motherboard_model${normal}"
+
+    # Print maximum capacity with yellow color and border
+    printf "║ %-$(($longest_line_length+9))s ║\n" "${yellow}Maximum Capacity:    $max_capacity${normal} "
+
+    # Print installed memory with yellow color and border
+    printf "║ %-$(($longest_line_length+9))s ║\n" "${yellow}Installed Memory:    $memory_size GB${normal} "
+
+    # Print middle border
+    printf "╠%s╝\n" "$line"
+
+    # Check if bank locator should be printed in the header
+    bank_locator_check=$(dmidecode -t memory | grep 'Bank Locator' | awk '{print $3" "$4}' | head -1)
+    if [[ $bank_locator_check != "Not Specified" ]]; then
+        # Bank locator should be displayed in the header
+        # Print header with cyan color and border
+        printf "║ ${cyan}%-14s %-8s %-9s %-10s %-7s${normal}║\n" "Bank Locator" "Locator" "Size" "Type" "Speed"
+
+        # Print separator line
+        printf "╟─────────────────────────────────────────────────────╢\n"
+
+        # Get unique Handles
+        handles=$(dmidecode -t memory | grep -P "Handle\s+\w+" | awk '{print $2}')
+
+        # Calculate CPU sockets
+        cpu_sockets=$(lscpu | grep Socket | awk '{print $2}')
+
+        # Skip handles based on CPU sockets
+        if [ "$cpu_sockets" = "2" ]; then
+            handles=$(echo "$handles" | awk 'NR>2')
+        elif [ "$cpu_sockets" = "1" ]; then
+            handles=$(echo "$handles" | awk 'NR>1')
+        fi
+
+        prev_processor=""
+        # Loop over each unique Handle
+        for handle in $handles; do
+            # Extract section corresponding to this Handle
+            section=$(dmidecode -t memory | grep -A20 -w "Handle $handle")
+
+            # Extract details
+            bank_locator=$(echo "$section" | grep 'Bank Locator' | awk -F': ' '{print $2}')
+            locator=$(echo "$section" | awk -F': ' '/Locator:/{print $2}' | head -1)
+            size=$(echo "$section" | grep 'Size' | awk -F': ' '{print $2}')
+            type=$(echo "$section" | grep 'Type:' | awk -F': ' '{print $2}' | tail -n 1)
+            speed=$(echo "$section" | grep 'Configured Memory Speed' | awk -F': ' '{print $2}' | awk '{print $1}')
+            speed="${speed}MHz"
+
+            # Check if module is installed and form the output
+            if [[ $size == "No Module Installed" ]]; then
+                size="Empty"
+                type=""
+                module_type="N/A"
+                speed="N/A"
+            else
+                module_type=$(dmidecode -t memory | grep -A19 "Memory Device$" | grep "Type Detail:" | cut -d: -f2 | grep -E "Registered|LRDIMM" | head -1 | sed 's/^ *//' | sed 's/Synchronous Registered (Buffered)/RDIMM/' | sed 's/Registered (Buffered)/RDIMM/' | sed 's/Synchronous LRDIMM/LRDIMM/')
+                type="${type} "
+            fi
+
+            # Extract the processor number from the Bank Locator
+            processor=$(echo "$bank_locator" | awk '{print $1}')
+
+            # Check if the current handle belongs to a different processor
+            if [[ $prev_processor != "" && $prev_processor != "$processor" ]]; then
+                # Print a separator line between processors
+                printf "║\n"
+                printf "╟─────────────────────────────────────────────────────╢\n"
+                printf "║\n"
+            fi
+
+            # Print the output with formatting and green color
+            printf "║ ${green}%-14s %-8s %-9s %-10s %-7s${normal}║\n" "${bank_locator}" "${locator}" "${size}" "${type}${module_type}" "${speed}"
+
+            prev_processor="$processor"
+        done
+    else
+        # Bank locator should not be displayed in the header
+        printf "║ ${cyan}%-18s %-7s %-15s %-9s${normal}║\n" "Locator" "Size" "Type" "Speed"
+
+        # Print separator line
+        printf "╟─────────────────────────────────────────────────────╢\n"
+
+        # Get unique Handles
+        handles=$(dmidecode -t memory | grep -P "Handle\s+\w+" | awk '{print $2}')
+
+        # Calculate CPU sockets
+        cpu_sockets=$(lscpu | grep Socket | awk '{print $2}')
+
+        # Skip handles based on CPU sockets
+        if [ "$cpu_sockets" = "2" ]; then
+            handles=$(echo "$handles" | awk 'NR>2')
+        elif [ "$cpu_sockets" = "1" ]; then
+            handles=$(echo "$handles" | awk 'NR>1')
+        fi
+
+        prev_processor=""
+        # Loop over each unique Handle
+        for handle in $handles; do
+            # Extract section corresponding to this Handle
+            section=$(dmidecode -t memory | grep -A20 -w "Handle $handle")
+
+            # Extract details
+            locator=$(echo "$section" | awk -F': ' '/Locator:/{print $2}' | head -1)
+            size=$(echo "$section" | grep 'Size' | awk -F': ' '{print $2}')
+            type=$(echo "$section" | grep 'Type:' | awk -F': ' '{print $2}' | tail -n 1)
+            speed=$(echo "$section" | grep 'Configured Memory Speed' | awk -F': ' '{print $2}' | awk '{print $1}')
+            speed="${speed}MHz"
+
+            # Check if module is installed and form the output
+            if [[ $size == "No Module Installed" ]]; then
+                size="Empty"
+                type=""
+                module_type="N/A"
+                speed="N/A"
+            else
+                module_type=$(dmidecode -t memory | grep -A19 "Memory Device$" | grep "Type Detail:" | cut -d: -f2 | grep -E "Registered|LRDIMM" | head -1 | sed 's/^ *//' | sed 's/Synchronous Registered (Buffered)/RDIMM/' | sed 's/Registered (Buffered)/RDIMM/' | sed 's/Synchronous LRDIMM/LRDIMM/')
+                type="${type} "
+            fi
+
+            # Extract the processor number from the Locator
+            processor=$(echo "$locator" | awk '{print $2}')
+
+            # Check if the current handle belongs to a different processor
+            if [[ $prev_processor != "" && $prev_processor != "$processor" ]]; then
+                # Print a separator line between processors
+                printf "║\n"
+                printf "╟─────────────────────────────────────────────────────╢\n"
+                printf "║\n"
+            fi
+
+            # Print the output with formatting and green color
+            printf "║ ${green}%-17s %-8s %-15s %-9s${normal}║\n" "${locator}" "${size}" "${type}${module_type}" "${speed}"
+
+            prev_processor="$processor"
+        done
+    fi
+
+    # Print bottom border
+    printf "╚═════════════════════════════════════════════════════╝\n"
+    exit;
+fi
+
+
+if [ "$1" = "disk" ] || [ "$1" = "-d" ]; then
+
+        # Check to see if the required packages are installed.
+        # Install packages based on operating system
+        if [[ "$(cat /etc/os-release | grep PRETTY_NAME |  grep -o '".*"' | sed 's/"//g')" =~ ^CentOS.* ]]; then
+            yum -y install bc iperf3 smartmontools fio p7zip hdparm lshw lm_sensors curl > /dev/null 2>&1;
+        elif [[ "$(cat /etc/os-release | grep PRETTY_NAME |  grep -o '".*"' | sed 's/"//g')" =~ ^Stream.* ]]; then
+            yum -y install bc iperf3 smartmontools fio hdparm lshw lm_sensors curl > /dev/null 2>&1;
+            dnf -y install epel-release > /dev/null 2>&1;
+            dnf -y install p7zip p7zip-plugins > /dev/null 2>&1;
+        elif [[ "$(cat /etc/os-release | grep PRETTY_NAME |  grep -o '".*"' | sed 's/"//g')" =~ ^AlmaLinux.* ]]; then
+            yum -y install bc iperf3 smartmontools fio hdparm lshw lm_sensors curl > /dev/null 2>&1;
+            dnf -y install epel-release > /dev/null 2>&1;
+            dnf -y install p7zip p7zip-plugins > /dev/null 2>&1;
+        elif [[ "$(cat /etc/os-release | grep PRETTY_NAME |  grep -o '".*"' | sed 's/"//g')" =~ ^CloudLinux.* ]]; then
+            yum -y install bc iperf3 smartmontools fio p7zip hdparm lshw lm_sensors curl > /dev/null 2>&1;
+        elif [[ "$(cat /etc/os-release | grep PRETTY_NAME |  grep -o '".*"' | sed 's/"//g')" =~ ^Ubuntu.* ]]; then
+            apt -y install bc iperf3 smartmontools memtester fio p7zip-full hdparm lshw lm-sensors curl > /dev/null 2>&1;
+        elif [[ "$(cat /etc/os-release | grep PRETTY_NAME |  grep -o '".*"' | sed 's/"//g')" =~ ^Debian.* ]]; then
+            apt -y install bc iperf3 smartmontools memtester fio p7zip-full hdparm lshw lm-sensors curl > /dev/null 2>&1;
+        elif [[ "$(cat /etc/os-release | grep PRETTY_NAME |  grep -o '".*"' | sed 's/"//g')" =~ ^FreeBSD.* ]]; then
+            echo "Sorry, FreeBSD not supported.... yet :)";
+            exit;
+        fi
+
+        # Check for an LSI RAID card
+        if [ "$(lspci | grep -E "LSI" | grep -E "RAID")" ]; then
+
+            # Some servers have the command MegaCli
+            if [ -x "$(command -v MegaCli)" ]; then
+
+                # Check NVMe health, if applicable
+                for i in $(lsblk | grep nvme | grep disk | awk '{print $1}'); do
+                serial=$(smartctl -i /dev/$i | grep Serial | awk '{print $3}');
+                disk=$(smartctl -i /dev/$i | grep -iE "Device Model|Model Number" | cut -d : -f 2 | sed -e 's/^[ \t]*//');
+                speed=$(hdparm -tT /dev/$i | tail -1 | awk '{print $(NF-1)}');
+                    if [ $(smartctl -a /dev/$i | grep -iE "Reallocate|Uncorrectable|Pending_Sector|Integrity Errors:" | awk '{print $NF}' | paste -sd+ | bc) -ne 0 ]; then
+                        echo -e "Device:\t/dev/$i\nModel:\t$disk\nStatus:\t${red}FAILED${normal}\nSN:\t${serial}\nSpeed:\t${speed} MB/s\n"
+                    else
+                        if [ $(smartctl -H /dev/$i | grep 'SMART overall-health self-assessment test' | awk '{print $6}') = PASSED ]; then
+                        echo -e "Device:\t/dev/$i\nModel:\t$disk\nStatus:\t${green}PASSED${normal}\nSN:\t${serial}\nSpeed:\t${speed} MB/s\n"
+                        fi
+                    fi
+                done
+
+                # Check drive health behind RAID card
+                for i in $(MegaCli -pdlist -a0| grep -oP '(?<=Device Id: )[^ ]*'); do
+                serial=$(smartctl -d sat+megaraid,$i -a /dev/sda | grep Serial | awk '{print $3}');
+                disk=$(smartctl -d sat+megaraid,$i -a /dev/sda | grep -iE "Device Model|Model Number" | cut -d : -f 2 | sed -e 's/^[ \t]*//');
+                    if [ $(smartctl -d sat+megaraid,$i -a /dev/sda | grep -iE "Reallocate|Uncorrectable|Pending_Sector|Integrity Errors:" | awk '{print $NF}' | paste -sd+ | bc) -ne 0 ]; then
+                        echo -e "Device:\t/dev/$i\nModel:\t$disk\nStatus:\t${red}FAILED${normal}\nSN:\t${serial}\n"
+                    else
+                        if [ $(smartctl -d sat+megaraid,$i -H /dev/sda | grep 'SMART overall-health self-assessment test' | awk '{print $6}') = PASSED ]; then
+                            echo -e "Device:\t/dev/$i\nModel:\t$disk\nStatus:\t${green}PASSED${normal}\nSN:\t${serial}\n"
+                        fi
+                    fi
+                done
+
+            # Some servers have the command megacli
+            elif [ -x "$(command -v megacli)" ]; then
+
+                # Check NVMe health, if applicable
+                for i in $(lsblk | grep nvme | grep disk | awk '{print $1}'); do
+                serial=$(smartctl -i /dev/$i | grep Serial | awk '{print $3}');
+                disk=$(smartctl -i /dev/$i | grep -iE "Device Model|Model Number" | cut -d : -f 2 | sed -e 's/^[ \t]*//');
+                speed=$(hdparm -tT /dev/$i | tail -1 | awk '{print $(NF-1)}');
+                    if [ $(smartctl -a /dev/$i | grep -iE "Reallocate|Uncorrectable|Pending_Sector|Integrity Errors:" | awk '{print $NF}' | paste -sd+ | bc) -ne 0 ]; then
+                        echo -e "Device:\t/dev/$i\nModel:\t$disk\nStatus:\t${red}FAILED${normal}\nSN:\t${serial}\nSpeed:\t${speed} MB/s\n"
+                    else
+                        if [ $(smartctl -H /dev/$i | grep 'SMART overall-health self-assessment test' | awk '{print $6}') = PASSED ]; then
+                        echo -e "Device:\t/dev/$i\nModel:\t$disk\nStatus:\t${green}PASSED${normal}\nSN:\t${serial}\nSpeed:\t${speed} MB/s\n"
+                        fi
+                    fi
+                done
+
+                # Check drive health behind RAID card
+                for i in $(megacli -pdlist -a0| grep -oP '(?<=Device Id: )[^ ]*'); do
+                serial=$(smartctl -d sat+megaraid,$i -a /dev/sda | grep Serial | awk '{print $3}');
+                disk=$(smartctl -d sat+megaraid,$i -a /dev/sda | grep -iE "Device Model|Model Number" | cut -d : -f 2 | sed -e 's/^[ \t]*//');
+                    if [ $(smartctl -d sat+megaraid,$i -a /dev/sda | grep -iE "Reallocate|Uncorrectable|Pending_Sector|Integrity Errors:" | awk '{print $NF}' | paste -sd+ | bc) -ne 0 ]; then
+                        echo -e "Device:\t/dev/$i\nModel:\t$disk\nStatus:\t${red}FAILED${normal}\nSN:\t${serial}\n"
+                    else
+                        if [ $(smartctl -d sat+megaraid,$i -H /dev/sda | grep 'SMART overall-health self-assessment test' | awk '{print $6}') = PASSED ]; then
+                            echo -e "Device:\t/dev/$i\nModel:\t$disk\nStatus:\t${green}PASSED${normal}\nSN:\t${serial}\n"
+                        fi
+                    fi
+                done
+            else
+                echo -e "\n\nError: megacli is not installed. Exiting"
+                exit;
+            fi
+
+        # Check for an HP RAID card
+        elif [ "$(lspci | grep -E "Smart Array")" ] || [ "$(lspci | grep -E "Adaptec Smart Storage")" ]; then
+
+            # Some servers have the command hpssacli
+            if [ -x "$(command -v hpssacli)" ]; then
+                if [ "$(hpssacli ctrl all show config detail | grep -iEo "HBA|RAID" | head -1)" == "RAID" ] ||
+                   [ $(hpssacli ctrl all show config detail | grep -A5 "Physical Drives$" | grep physicaldrive | wc -l) -gt 0 ]; then
+
+                    # Check NVMe health, if applicable
+                    for i in $(lsblk | grep nvme | grep disk | awk '{print $1}'); do
+                    serial=$(smartctl -i /dev/$i | grep Serial | awk '{print $3}');
+                    disk=$(smartctl -i /dev/$i | grep -iE "Device Model|Model Number" | cut -d : -f 2 | sed -e 's/^[ \t]*//');
+                    speed=$(hdparm -tT /dev/$i | tail -1 | awk '{print $(NF-1)}');
+                        if [ $(smartctl -a /dev/$i | grep -iE "Reallocate|Uncorrectable|Pending_Sector|Integrity Errors:" | awk '{print $NF}' | paste -sd+ | bc) -ne 0 ]; then
+                            echo -e "Device:\t/dev/$i\nModel:\t$disk\nStatus:\t${red}FAILED${normal}\nSN:\t${serial}\nSpeed:\t${speed} MB/s\n"
+                        else
+                            if [ $(smartctl -H /dev/$i | grep 'SMART overall-health self-assessment test' | awk '{print $6}') = PASSED ]; then
+                            echo -e "Device:\t/dev/$i\nModel:\t$disk\nStatus:\t${green}PASSED${normal}\nSN:\t${serial}\nSpeed:\t${speed} MB/s\n"
+                            fi
+                        fi
+                    done
+
+                     # Check drive health behind RAID card
+                     # Get the number of drives on the server
+                     drivecount=$(hpssacli ctrl all show config detail | grep -A5 "Physical Drives$" | grep physicaldrive | wc -l);
+                     drivecount=$(($drivecount-1));
+                     # Loop through each drive
+                     for i in $(seq 0 $drivecount); do
+                         counter=$(($i+1));
+                         driveletter=$(hpssacli ctrl all show config detail | grep -E "Disk Name" | awk '{print $3}' | cut -c 6- | sed -n "${counter}p");
+                         serial=$(smartctl -a -d cciss,$i /dev/sg1 | grep Serial | awk '{print $3}');
+                         disk=$(smartctl -a -d cciss,$i /dev/sg1 | grep -iE "Device Model|Model Number" | cut -d : -f 2 | sed -e 's/^[ \t]*//');
+                         speed=$(hdparm -tT /dev/$driveletter | tail -1 | awk '{print $(NF-1)}');
+                         if [ $(smartctl -a -d cciss,$i /dev/sg1 | grep -iE "Reallocate|Uncorrectable|Pending_Sector|Integrity Errors:" | awk '{print $NF}' | paste -sd+ | bc) -ne 0 ]; then
+                             echo -e "Device:\t/dev/$driveletter\nModel:\t$disk\nStatus:\t${red}FAILED${normal}\nSN:\t${serial}\nSpeed:\t${speed} MB/s\n"
+                         else
+                             if [ $(smartctl -H -d cciss,$i /dev/sg1 | grep 'SMART overall-health self-assessment test' | awk '{print $6}') = PASSED ]; then
+                                 echo -e "Device:\t/dev/$driveletter\nModel:\t$disk\nStatus:\t${green}PASSED${normal}\nSN:\t${serial}\nSpeed:\t${speed} MB/s\n"
+                             fi
+                         fi
+                     done
+            else
+                for i in $(lsblk | grep disk | awk '{print $1}'); do
+                serial=$(smartctl -i /dev/$i | grep Serial | awk '{print $3}');
+                disk=$(smartctl -i /dev/$i | grep -iE "Device Model|Model Number" | cut -d : -f 2 | sed -e 's/^[ \t]*//');
+                speed=$(hdparm -tT /dev/$i | tail -1 | awk '{print $(NF-1)}');
+                    if [ $(smartctl -a /dev/$i | grep -iE "Reallocate|Uncorrectable|Pending_Sector|Integrity Errors:" | awk '{print $NF}' | paste -sd+ | bc) -ne 0 ]; then
+                        echo -e "Device:\t/dev/$i\nModel:\t$disk\nStatus:\t${red}FAILED${normal}\nSN:\t${serial}\nSpeed:\t${speed} MB/s\n"
+                    else
+                        if [ $(smartctl -H /dev/$i | grep 'SMART overall-health self-assessment test' | awk '{print $6}') = PASSED ]; then
+                        e0cho -e "Device:\t/dev/$i\nModel:\t$disk\nStatus:\t${green}PASSED${normal}\nSN:\t${serial}\nSpeed:\t${speed} MB/s\n"
+                        fi
+                    fi
+                done
+            fi
+
+            # Some servers have the command ssacli instead
+            elif [ -x "$(command -v ssacli)" ]; then
+                if [ "$(ssacli ctrl all show config detail | grep -iEo "HBA|RAID" | head -1)" == "RAID" ] ||
+                   [ $(ssacli ctrl all show config detail | grep -A5 "Physical Drives$" | grep physicaldrive | wc -l) -gt 0 ]; then
+                    # Check NVMe health, if applicable
+                    for i in $(lsblk | grep nvme | grep disk | awk '{print $1}'); do
+                    serial=$(smartctl -i /dev/$i | grep Serial | awk '{print $3}');
+                    disk=$(smartctl -i /dev/$i | grep -iE "Device Model|Model Number" | cut -d : -f 2 | sed -e 's/^[ \t]*//');
+                    speed=$(hdparm -tT /dev/$i | tail -1 | awk '{print $(NF-1)}');
+                        if [ $(smartctl -a /dev/$i | grep -iE "Reallocate|Uncorrectable|Pending_Sector|Integrity Errors:" | awk '{print $NF}' | paste -sd+ | bc) -ne 0 ]; then
+                            echo -e "Device:\t/dev/$i\nModel:\t$disk\nStatus:\t${red}FAILED${normal}\nSN:\t${serial}\nSpeed:\t${speed} MB/s\n"
+                        else
+                            if [ $(smartctl -H /dev/$i | grep 'SMART overall-health self-assessment test' | awk '{print $6}') = PASSED ]; then
+                            echo -e "Device:\t/dev/$i\nModel:\t$disk\nStatus:\t${green}PASSED${normal}\nSN:\t${serial}\nSpeed:\t${speed} MB/s\n"
+                            fi
+                        fi
+                    done
+
+                    # Check drive health behind RAID card
+                    # Get the number of drives on the server
+                    drivecount=$(ssacli ctrl all show config detail | grep -A5 "Physical Drives$" | grep physicaldrive | wc -l);
+                    drivecount=$(($drivecount-1));
+                    # Loop through each drive
+                    for i in $(seq 0 $drivecount); do
+                        counter=$(($i+1));
+                        driveletter=$(ssacli ctrl all show config detail | grep -E "Disk Name" | awk '{print $3}' | cut -c 6- | sed -n "${counter}p");
+                        serial=$(smartctl -a -d cciss,$i /dev/sg1 | grep Serial | awk '{print $3}');
+                        disk=$(smartctl -a -d cciss,$i /dev/sg1 | grep -iE "Device Model|Model Number" | cut -d : -f 2 | sed -e 's/^[ \t]*//');
+                        speed=$(hdparm -tT /dev/$driveletter | tail -1 | awk '{print $(NF-1)}');
+                        if [ $(smartctl -a -d cciss,$i /dev/sg1 | grep -iE "Reallocate|Uncorrectable|Pending_Sector|Integrity Errors:" | awk '{print $NF}' | paste -sd+ | bc) -ne 0 ]; then
+                            echo -e "Device:\t/dev/$driveletter\nModel:\t$disk\nStatus:\t${red}FAILED${normal}\nSN:\t${serial}\nSpeed:\t${speed} MB/s\n"
+                        else
+                            if [ $(smartctl -H -d cciss,$i /dev/sg1 | grep 'SMART overall-health self-assessment test' | awk '{print $6}') = PASSED ]; then
+                                echo -e "Device:\t/dev/$driveletter\nModel:\t$disk\nStatus:\t${green}PASSED${normal}\nSN:\t${serial}\nSpeed:\t${speed} MB/s\n"
+                            fi
+                        fi
+                    done
+                else
+                    for i in $(lsblk | grep disk | awk '{print $1}'); do
+                    serial=$(smartctl -i /dev/$i | grep Serial | awk '{print $3}');
+                    disk=$(smartctl -i /dev/$i | grep -iE "Device Model|Model Number" | cut -d : -f 2 | sed -e 's/^[ \t]*//');
+                    speed=$(hdparm -tT /dev/$i | tail -1 | awk '{print $(NF-1)}');
+                        if [ $(smartctl -a /dev/$i | grep -iE "Reallocate|Uncorrectable|Pending_Sector|Integrity Errors:" | awk '{print $NF}' | paste -sd+ | bc) -ne 0 ]; then
+                            echo -e "Device:\t/dev/$i\nModel:\t$disk\nStatus:\t${red}FAILED${normal}\nSN:\t${serial}\nSpeed:\t${speed} MB/s\n"
+                        else
+                            if [ $(smartctl -H /dev/$i | grep 'SMART overall-health self-assessment test' | awk '{print $6}') = PASSED ]; then
+                            echo -e "Device:\t/dev/$i\nModel:\t$disk\nStatus:\t${green}PASSED${normal}\nSN:\t${serial}\nSpeed:\t${speed} MB/s\n"
+                            fi
+                        fi
+                    done
+                fi
+
+            # Some servers dont have hpssacli or ssacli installed. hard to automate install
+            else
+                echo -e "\n\nError: hpssacli is not installed. Exiting"
+                exit;
+            fi
+
+        # If server does not have a RAID card, use smartctl to get drive health
+        else
+            for i in $(lsblk -do NAME,RM,SIZE,RO,TYPE,MOUNTPOINT  | grep -v ' 1 ' | grep disk | awk '{print $1}'); do
+            serial=$(smartctl -i /dev/$i | grep Serial | awk '{print $3}');
+            disk=$(smartctl -i /dev/$i | grep -iE "Device Model|Model Number|Product" | cut -d : -f 2 | sed -e 's/^[ \t]*//');
+            type=$(smartctl -a /dev/$i | grep -oE "SSD|NVMe|SAS" | tail -1);
+            speed=$(hdparm -tT /dev/$i | tail -1 | awk '{print $(NF-1)}' | cut -d. -f1);
+            error_count=$(smartctl -a /dev/$i | grep -iE "Reallocate|Uncorrectable|Pending_Sector|Integrity Errors:" | awk '{print $NF}' | paste -sd+ | bc)
+            error_count=${error_count:-0}
+            health_status=$(smartctl -H /dev/$i | grep 'SMART overall-health self-assessment test' | awk '{print $6}')
+            health_status=${health_status:-"PASSED"}
+            if [ "${type}" == "NVMe" ]; then
+                if [ "$speed" -gt "1300" ]; then
+                    if [ "$error_count" -ne 0 ]; then
+                        echo -e "Device:\t/dev/$i\nModel:\t$disk\nStatus:\t${red}FAILED${normal}\nSN:\t${serial}\nSpeed:\t${green}${speed} MB/s${normal}\n"
+                    else
+                        if [ "$health_status" = "PASSED" ]; then
+                        echo -e "Device:\t/dev/$i\nModel:\t$disk\nStatus:\t${green}PASSED${normal}\nSN:\t${serial}\nSpeed:\t${green}${speed} MB/s${normal}\n"
+                        fi
+                    fi
+                elif [ "$speed" -lt "1300" ]; then
+                    if [ "$speed" -lt "700" ]; then
+                        if [ "$error_count" -ne 0 ]; then
+                            echo -e "Device:\t/dev/$i\nModel:\t$disk\nStatus:\t${red}FAILED${normal}\nSN:\t${serial}\nSpeed:\t${red}${speed} MB/s${normal}\n"
+                        else
+                            if [ "$health_status" = "PASSED" ]; then
+                            echo -e "Device:\t/dev/$i\nModel:\t$disk\nStatus:\t${green}PASSED${normal}\nSN:\t${serial}\nSpeed:\t${red}${speed} MB/s${normal}\n"
+                            fi
+                        fi
+                    else
+                        if [ "$error_count" -ne 0 ]; then
+                            echo -e "Device:\t/dev/$i\nModel:\t$disk\nStatus:\t${red}FAILED${normal}\nSN:\t${serial}\nSpeed:\t${yellow}${speed} MB/s${normal}\n"
+                        else
+                            if [ "$health_status" = "PASSED" ]; then
+                            echo -e "Device:\t/dev/$i\nModel:\t$disk\nStatus:\t${green}PASSED${normal}\nSN:\t${serial}\nSpeed:\t${yellow}${speed} MB/s${normal}\n"
+                            fi
+                        fi
+                    fi
+                fi
+            elif [ "${type}" == "SSD" ]; then
+                if [ "$speed" -gt "450" ]; then
+                    if [ "$error_count" -ne 0 ]; then
+                        echo -e "Device:\t/dev/$i\nModel:\t$disk\nStatus:\t${red}FAILED${normal}\nSN:\t${serial}\nSpeed:\t${green}${speed} MB/s${normal}\n"
+                    else
+                        if [ "$health_status" = "PASSED" ]; then
+                        echo -e "Device:\t/dev/$i\nModel:\t$disk\nStatus:\t${green}PASSED${normal}\nSN:\t${serial}\nSpeed:\t${green}${speed} MB/s${normal}\n"
+                        fi
+                    fi
+                elif [ "$speed" -lt "450" ]; then
+                    if [ "$speed" -lt "150" ]; then
+                        if [ "$error_count" -ne 0 ]; then
+                            echo -e "Device:\t/dev/$i\nModel:\t$disk\nStatus:\t${red}FAILED${normal}\nSN:\t${serial}\nSpeed:\t${red}${speed} MB/s${normal}\n"
+                        else
+                            if [ "$health_status" = "PASSED" ]; then
+                            echo -e "Device:\t/dev/$i\nModel:\t$disk\nStatus:\t${green}PASSED${normal}\nSN:\t${serial}\nSpeed:\t${red}${speed} MB/s${normal}\n"
+                            fi
+                        fi
+                    else
+                        if [ "$error_count" -ne 0 ]; then
+                            echo -e "Device:\t/dev/$i\nModel:\t$disk\nStatus:\t${red}FAILED${normal}\nSN:\t${serial}\nSpeed:\t${yellow}${speed} MB/s${normal}\n"
+                        else
+                            if [ "$health_status" = "PASSED" ]; then
+                            echo -e "Device:\t/dev/$i\nModel:\t$disk\nStatus:\t${green}PASSED${normal}\nSN:\t${serial}\nSpeed:\t${yellow}${speed} MB/s${normal}\n"
+                            fi
+                        fi
+                    fi
+                fi
+            else
+                if [ "$speed" -gt "150" ]; then
+                    if [ "$error_count" -ne 0 ]; then
+                        echo -e "Device:\t/dev/$i\nModel:\t$disk\nStatus:\t${red}FAILED${normal}\nSN:\t${serial}\nSpeed:\t${green}${speed} MB/s${normal}\n"
+                    else
+                        if [ "$health_status" = "PASSED" ]; then
+                        echo -e "Device:\t/dev/$i\nModel:\t$disk\nStatus:\t${green}PASSED${normal}\nSN:\t${serial}\nSpeed:\t${green}${speed} MB/s${normal}\n"
+                        fi
+                    fi
+                elif [ "$speed" -lt "150" ]; then
+                    if [ "$speed" -lt "50" ]; then
+                        if [ "$error_count" -ne 0 ]; then
+                            echo -e "Device:\t/dev/$i\nModel:\t$disk\nStatus:\t${red}FAILED${normal}\nSN:\t${serial}\nSpeed:\t${red}${speed} MB/s${normal}\n"
+                        else
+                            if [ "$health_status" = "PASSED" ]; then
+                            echo -e "Device:\t/dev/$i\nModel:\t$disk\nStatus:\t${green}PASSED${normal}\nSN:\t${serial}\nSpeed:\t${red}${speed} MB/s${normal}\n"
+                            fi
+                        fi
+                    else
+                        if [ "$error_count" -ne 0 ]; then
+                            echo -e "Device:\t/dev/$i\nModel:\t$disk\nStatus:\t${red}FAILED${normal}\nSN:\t${serial}\nSpeed:\t${yellow}${speed} MB/s${normal}\n"
+                        else
+                            if [ "$health_status" = "PASSED" ]; then
+                            echo -e "Device:\t/dev/$i\nModel:\t$disk\nStatus:\t${green}PASSED${normal}\nSN:\t${serial}\nSpeed:\t${yellow}${speed} MB/s${normal}\n"
+                            fi
+                        fi
+                    fi
+                fi
+            fi
+            done
+        fi
+        exit;
+fi
+
+
+
+
+#######################################################
+#     _____      _ _                  _       _       #
+#    |  ___|   _| | |   ___  ___ _ __(_)_ __ | |_     #
+#    | |_ | | | | | |  / __|/ __| '__| | '_ \| __|    #
+#    |  _|| |_| | | |  \__ \ (__| |  | | |_) | |_     #
+#    |_|   \__,_|_|_|  |___/\___|_|  |_| .__/ \__|    #
+#                                      |_|            #
+#######################################################
+
+# check if user int or installer exists, and ask the user if they can be removed
+# if they can be removed, remove them
+# if they can't be removed, exit
+
+# check if users int and installer exist
+for user in int installer; do
+    if [ -d /home/"$user" ]; then
+        while true; do
+            read -p "The user ${cyan}${user}${normal} has been detected. ${green}Remove it?${normal} (y/n) " removeuser
+            case $removeuser in
+                [Yy]* )
+                    userdel "$user"
+                    cd /home && rm -rf "$user"
+                    break;;
+                [Nn]* )
+                    echo -e "\n\t${yellow}WARNING${normal} user ${cyan}${user}${normal} has not been removed\n"
+                    break;;
+                * ) echo "Please answer yes or no.";;
+            esac
+        done
+    fi
+done
+
+if [ ! -d /home/int ] && [ ! -d /home/installer ]; then
+    echo -e "\n${green}No extra users detected${normal}"
+fi
+
+
+# check if permitrootlogin is set to prohibit-password in /etc/ssh/sshd_config
+# if it is, ask the user if they want to change it to yes
+if grep -q "#PermitRootLogin prohibit-password" /etc/ssh/sshd_config; then
+    while true; do
+        read -p "${cyan}SSH${normal} root access is ${yellow}restricted${normal}. ${green}Enable?${normal} (y/n) " changepermitrootlogin
+        case $changepermitrootlogin in
+            [Yy]* )
+            sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/g' /etc/ssh/sshd_config;
+            service sshd restart;
+            service ssh restart;
+            echo -e "\n"
+            break;;
+            [Nn]* ) echo -e "\n\t${yellow}WARNING${normal} root access is ${yellow}restricted${normal}\n"; break;;
+            * ) echo "Please answer yes or no.";;
+        esac
+    done
+else
+    echo -e "${green}SSH root access is enabled${normal}\n"
+fi
+
+# warn if mdadm needs to be updated
+if [ -f /etc/mdadm/mdadm.conf ]; then
+    mdadmcheck=`grep ^MAILADDR /etc/mdadm/mdadm.conf  | awk '{print $2}'`;
+        if [ "$mdadmcheck" = "root" ]; then
+            while true; do
+                read -p "mdadm ${cyan}MAILADDR${normal} is set to ${cyan}root${normal}. ${green}Update${normal} to ${cyan}hardware@interserver.net${normal}? (y/n) " correct
+                case $correct in
+                    [Yy]* ) 
+                    sed -i 's/MAILADDR root/MAILADDR hardware@interserver.net/g' /etc/mdadm/mdadm.conf;
+                    echo ""; break;;
+                    [Nn]* ) echo -e "\n\t${yellow}WARNING${normal} /etc/mdadm/mdadm.conf exists with ${cyan}MAILADDR${normal} set to ${cyan}root${normal}\n"; exit;;
+                    * ) echo "Please answer yes or no.";;
+                esac
+            done
+	fi
+fi
+
+# Check to see if the required packages are installed.
+# Install packages based on operating system
+# If not, prompt the user to install them
+if [ ! -x "$(command -v bc)" ] || [ ! -x "$(command -v fio)" ] || [ ! -x "$(command -v iperf3)" ] || [ ! -x "$(command -v smartctl)" ] || [ ! -x "$(command -v 7za)" ] || [ ! -x "$(command -v sensors)" ] || [ ! -x "$(command -v ipcalc)" ]; then
+    while true; do
+        read -p "The required packages for this script are not installed. Would you like to install them? (y/n) " correct
+        case $correct in
+            [Yy]* )
+            if [[ "$(cat /etc/os-release | grep PRETTY_NAME |  grep -o '".*"' | sed 's/"//g')" =~ ^CentOS.* ]]; then
+                yum -y update;
+                yum -y install bc iperf3 smartmontools fio p7zip ethtool pciutils lm_sensors curl ipcalc > /dev/null 2>&1;
+                echo;
+            elif [[ "$(cat /etc/os-release | grep PRETTY_NAME |  grep -o '".*"' | sed 's/"//g')" =~ ^Stream.* ]]; then
+                yum -y update;
+                yum -y install bc iperf3 smartmontools fio ethtool pciutils lm_sensors curl ipcalc > /dev/null 2>&1;
+                dnf -y install epel-release > /dev/null 2>&1;
+                dnf -y install p7zip p7zip-plugins > /dev/null 2>&1;
+                echo;
+            elif [[ "$(cat /etc/os-release | grep PRETTY_NAME |  grep -o '".*"' | sed 's/"//g')" =~ ^AlmaLinux.* ]]; then
+                yum -y update;
+                yum -y install bc iperf3 smartmontools fio ethtool pciutils lm_sensors curl ipcalc > /dev/null 2>&1;
+                dnf -y install epel-release > /dev/null 2>&1;
+                dnf -y install p7zip p7zip-plugins > /dev/null 2>&1;
+                echo;
+            elif [[ "$(cat /etc/os-release | grep PRETTY_NAME |  grep -o '".*"' | sed 's/"//g')" =~ ^CloudLinux.* ]]; then
+                yum -y update;
+                yum -y install bc iperf3 smartmontools fio p7zip ethtool pciutils lm_sensors curl ipcalc > /dev/null 2>&1;
+                echo;
+            elif [[ "$(cat /etc/os-release | grep PRETTY_NAME |  grep -o '".*"' | sed 's/"//g')" =~ ^Ubuntu.* ]]; then
+                apt update;
+                apt -y install bc iperf3 smartmontools memtester fio p7zip-full ethtool pciutils lm-sensors curl ipcalc > /dev/null 2>&1;
+                echo;
+            elif [[ "$(cat /etc/os-release | grep PRETTY_NAME |  grep -o '".*"' | sed 's/"//g')" =~ ^Debian.* ]]; then
+                apt update;
+                apt -y install bc iperf3 smartmontools memtester fio p7zip-full ethtool pciutils lm-sensors curl ipcalc > /dev/null 2>&1;
+                echo;
+            elif [[ "$(cat /etc/os-release | grep PRETTY_NAME |  grep -o '".*"' | sed 's/"//g')" =~ ^FreeBSD.* ]]; then
+                echo "Sorry, FreeBSD not supported.... yet :)";
+                exit;
+            fi
+            break;;
+            [Nn]* ) exit;;
+            * ) echo "Please answer yes or no.";;
+        esac
+    done
+fi
+
+# run /admin/assettemplate, and before proceeding, ask the user "Does this look correct?"
+# if it does, proceed, if not, exit
+echo "${cyan}System Information:${normal}"
+printf "%-19s\n" "-" | sed 's/\s/-/g'
+/admin/assettemplate
+
+while true; do
+    read -p "Does this look ${green}correct?${normal} (y/n) " correct
+    case $correct in
+        [Yy]* ) echo ""; break;;
+        [Nn]* ) echo -e "\nfix it.\n"; exit;;
+        * ) echo "Please answer yes or no.";;
+    esac
+done
+
+# get system stats
+echo -e "\n\n${cyan}System Stats:${normal}"
+printf "%-13s\n" "-" | sed 's/\s/-/g'
+/admin/systemstats | grep -iE "CPU|Mem|Disk|Load" | awk '{print $1 ":\t\t\t" $NF}'
+echo -e "\n\n"
+
+
+# run an iperf3 network speed test
+echo "${cyan}iperf3 Network Speed Tests (IPv4):${normal}"
+mainip=$(ip addr | grep inet | grep / | grep global | awk '{print $2}' | cut -d/ -f1 | head -n 1;)
+printf "%-34s\n" "-" | sed 's/\s/-/g'
+
+servers="dfw lax nyc"
+best_server=""; best_port=""; best_mbps=0
+printf "Finding best server..."
+
+# find best server+port by quick reverse test
+for i in $servers; do
+  printf "\r\033[KFinding best server... %s:scanning" "$i"
+  found_port=0
+  for port in {5201..5210}; do
+    test_output=$(timeout 2 iperf3 -t 1 -4 -f m -c $i.speedtest.is.cc -p $port -R 2>&1)
+    rc=$?
+    if [[ $rc -eq 124 ]]; then
+      continue
+    elif echo "$test_output" | grep -qi "server is busy"; then
+      continue
+    elif [[ $rc -ne 0 ]]; then
+      continue
+    else
+      mbps=$(echo "$test_output" | awk '/receiver/{print $7; exit}')
+      mbps_int=${mbps%.*}
+      printf "\r\033[KFinding best server... %s:%s %s Mbit/s" "$i" "$port" "${mbps_int:-0}"
+      if [[ -n "$mbps_int" && "$mbps_int" -gt "$best_mbps" ]]; then
+        best_mbps="$mbps_int"
+        best_server="$i.speedtest.is.cc"
+        best_port="$port"
+      fi
+      found_port=1
+      break
+    fi
+  done
+  if [[ $found_port -eq 0 ]]; then
+    printf "\r\033[KFinding best server... %s:no ports" "$i"
+  fi
+done
+
+speedtest_server="${best_server:-speedtest.is.cc}"
+open_port="$best_port"
+
+if [[ -n "$open_port" ]]; then
+  printf "\r\033[KUsing %s port %s" "$speedtest_server" "$open_port";  printf "\r\033[K"
+else
+  printf "\r\033[KUsing %s (fallback)"; printf "\r\033[K"
+fi
+
+printf "\r\033[K"
+
+if [[ -z "$open_port" ]]; then
+  # fallback: original open-port scanner on chosen host
+  for port in {5201..5210}; do
+    test_output=$(timeout 2 iperf3 -t 1 -4 -f m -c "$speedtest_server" -p "$port" -R 2>&1)
+    rc=$?
+    if [[ $rc -eq 124 ]]; then
+      continue
+    elif echo "$test_output" | grep -qi "server is busy"; then
+      continue
+    elif [[ $rc -ne 0 ]]; then
+      continue
+    else
+      open_port=$port
+      break
+    fi
+  done
+fi
+
+download=$(iperf3 -t 1 -4 -f m -c $speedtest_server -p $open_port -R)
+upload=$(iperf3 -t 1 -4 -f m -c $speedtest_server -p $open_port)
+echo "$upload" | grep sender | awk '{print "Upload: \t\t" $7" "$8}'
+echo "$download" | grep receiver | awk '{print "Download: \t\t" $7" "$8}'
+echo -e "\n"
+
+
+# check the drives for bad or relocated sectors using smartctl. If there are bad or relocated sectors, warn the user
+echo -e "\n${cyan}Checking for bad or reallocated sectors...${normal}"
+printf "%-42s\n" "-" | sed 's/\s/-/g'
+
+
+# Check for an LSI RAID card
+if [ "$(lspci | grep -E "LSI" | grep -E "RAID")" ]; then
+
+    # Some servers have the command megacli
+    if [ -x "$(command -v MegaCli)" ]; then
+        # Check NVMe health, if applicable
+        for i in $(lsblk | grep nvme | grep disk | awk '{print $1}'); do
+        serial=$(smartctl -i /dev/$i | grep Serial | awk '{print $3}' | tail -c 4);
+            if [ $(smartctl -a /dev/$i | grep -iE "Reallocate|Uncorrectable|Pending_Sector|Integrity Errors:" | awk '{print $NF}' | paste -sd+ | bc) -ne 0 ]; then
+                echo -e "Device: /dev/$i\tStatus: ${red}FAILED${normal}\tSN: ${serial}"
+            else
+                if [ $(smartctl -H /dev/$i | grep 'SMART overall-health self-assessment test' | awk '{print $6}') = PASSED ]; then
+                echo -e "Device: /dev/$i\tStatus: ${green}PASSED${normal}\tSN: ${serial}"
+                fi
+            fi
+        done
+
+        # Check drive health behind RAID card
+        for i in $(MegaCli -pdlist -a0| grep -oP '(?<=Device Id: )[^ ]*'); do
+        serial=$(smartctl -d sat+megaraid,$i -a /dev/sda | grep Serial | awk '{print $3}' | tail -c 4);
+            if [ $(smartctl -d sat+megaraid,$i -a /dev/sda | grep -iE "Reallocate|Uncorrectable|Pending_Sector|Integrity Errors:" | awk '{print $NF}' | paste -sd+ | bc) -ne 0 ]; then
+                echo -e "Device: /dev/$i\tStatus: ${red}FAILED${normal}\tSN: ${serial}"
+            else
+                if [ $(smartctl -d sat+megaraid,$i -H /dev/sda | grep 'SMART overall-health self-assessment test' | awk '{print $6}') = PASSED ]; then
+                    echo -e "Device: /dev/$i\tStatus: ${green}PASSED${normal}\tSN: ${serial}"
+                fi
+            fi
+        done
+    elif [ -x "$(command -v megacli)" ]; then
+
+        # Check NVMe health, if applicable
+        for i in $(lsblk | grep nvme | grep disk | awk '{print $1}'); do
+        serial=$(smartctl -i /dev/$i | grep Serial | awk '{print $3}' | tail -c 4);
+            if [ $(smartctl -a /dev/$i | grep -iE "Reallocate|Uncorrectable|Pending_Sector|Integrity Errors:" | awk '{print $NF}' | paste -sd+ | bc) -ne 0 ]; then
+                echo -e "Device: /dev/$i\tStatus: ${red}FAILED${normal}\tSN: ${serial}"
+            else
+                if [ $(smartctl -H /dev/$i | grep 'SMART overall-health self-assessment test' | awk '{print $6}') = PASSED ]; then
+                echo -e "Device: /dev/$i\tStatus: ${green}PASSED${normal}\tSN: ${serial}"
+                fi
+            fi
+        done
+
+        # Check drive health behind RAID card
+        for i in $(megacli -pdlist -a0| grep -oP '(?<=Device Id: )[^ ]*'); do
+        serial=$(smartctl -d sat+megaraid,$i -a /dev/sda | grep Serial | awk '{print $3}' | tail -c 4);
+            if [ $(smartctl -d sat+megaraid,$i -a /dev/sda | grep -iE "Reallocate|Uncorrectable|Pending_Sector|Integrity Errors:" | awk '{print $NF}' | paste -sd+ | bc) -ne 0 ]; then
+                echo -e "Device: /dev/$i\tStatus: ${red}FAILED${normal}\tSN: ${serial}"
+            else
+                if [ $(smartctl -d sat+megaraid,$i -H /dev/sda | grep 'SMART overall-health self-assessment test' | awk '{print $6}') = PASSED ]; then
+                    echo -e "Device: /dev/$i\tStatus: ${green}PASSED${normal}\tSN: ${serial}"
+                fi
+            fi
+        done
+    else
+        echo -e "\n\nError: megacli is not installed. Exiting"
+        exit;
+    fi
+
+
+# Check for an HP RAID card
+elif [ "$(lspci | grep -E "Smart Array")" ] || [ "$(lspci | grep -E "Adaptec Smart Storage")" ]; then
+
+    # Some servers have the command hpssacli
+    if [ -x "$(command -v hpssacli)" ]; then
+        if [ "$(hpssacli ctrl all show config detail | grep -iEo "HBA|RAID" | head -1)" == "RAID" ] ||
+           [ $(hpssacli ctrl all show config detail | grep -A5 "Physical Drives$" | grep physicaldrive | wc -l) -gt 0 ]; then
+            # Check NVMe health, if applicable
+            for i in $(lsblk | grep nvme | grep disk | awk '{print $1}'); do
+            serial=$(smartctl -i /dev/$i | grep Serial | awk '{print $3}' | tail -c 4);
+                if [ $(smartctl -a /dev/$i | grep -iE "Reallocate|Uncorrectable|Pending_Sector|Integrity Errors:" | awk '{print $NF}' | paste -sd+ | bc) -ne 0 ]; then
+                    echo -e "Device: /dev/$i\tStatus: ${red}FAILED${normal}\tSN: ${serial}"
+                else
+                    if [ $(smartctl -H /dev/$i | grep 'SMART overall-health self-assessment test' | awk '{print $6}') = PASSED ]; then
+                    echo -e "Device: /dev/$i\tStatus: ${green}PASSED${normal}\tSN: ${serial}"
+                    fi
+                fi
+            done
+
+            # Check drive health behind RAID card
+            # Get the number of drives on the server
+            drivecount=$(hpssacli ctrl all show config detail | grep -A5 "Physical Drives$" | grep physicaldrive | wc -l);
+            drivecount=$(($drivecount-1));
+            # Loop through each drive
+            for i in $(seq 0 $drivecount); do
+                counter=$(($i+1));
+                driveletter=$(hpssacli ctrl all show config detail | grep -E "Disk Name" | awk '{print $3}' | cut -c 6- | sed -n "${counter}p");
+                serial=$(smartctl -a -d cciss,$i /dev/sg1 | grep Serial | awk '{print $3}' | tail -c 4);
+                if [ $(smartctl -a -d cciss,$i /dev/sg1 | grep -iE "Reallocate|Uncorrectable|Pending_Sector|Integrity Errors:" | awk '{print $NF}' | paste -sd+ | bc) -ne 0 ]; then
+                    echo -e "Device: /dev/$driveletter\tStatus: ${red}FAILED${normal}\tSN: ${serial}"
+                else
+                    if [ $(smartctl -H -d cciss,$i /dev/sg1 | grep 'SMART overall-health self-assessment test' | awk '{print $6}') = PASSED ]; then
+                        echo -e "Device: /dev/$driveletter\tStatus: ${green}PASSED${normal}\tSN: ${serial}"
+                    fi
+                fi
+            done
+        else
+            for i in $(lsblk | grep disk | awk '{print $1}'); do
+            serial=$(smartctl -i /dev/$i | grep Serial | awk '{print $3}' | tail -c 4);
+                if [ $(smartctl -a /dev/$i | grep -iE "Reallocate|Uncorrectable|Pending_Sector|Integrity Errors:" | awk '{print $NF}' | paste -sd+ | bc) -ne 0 ]; then
+                    echo -e "Device: /dev/$i\tStatus: ${red}FAILED${normal}\tSN: ${serial}"
+                else
+                    if [ $(smartctl -H /dev/$i | grep 'SMART overall-health self-assessment test' | awk '{print $6}') = PASSED ]; then
+                    echo -e "Device: /dev/$i\tStatus: ${green}PASSED${normal}\tSN: ${serial}"
+                    fi
+                fi
+            done
+        fi
+
+    # Some servers have the command ssacli instead
+    elif [ -x "$(command -v ssacli)" ]; then
+        if [ "$(ssacli ctrl all show config detail | grep -iEo "HBA|RAID" | head -1)" == "RAID" ] ||
+           [ $(ssacli ctrl all show config detail | grep -A5 "Physical Drives$" | grep physicaldrive | wc -l) -gt 0 ]; then
+            # Check NVMe health, if applicable
+            for i in $(lsblk | grep nvme | grep disk | awk '{print $1}'); do
+            serial=$(smartctl -i /dev/$i | grep Serial | awk '{print $3}' | tail -c 4);
+                if [ $(smartctl -a /dev/$i | grep -iE "Reallocate|Uncorrectable|Pending_Sector|Integrity Errors:" | awk '{print $NF}' | paste -sd+ | bc) -ne 0 ]; then
+                    echo -e "Device: /dev/$i\tStatus: ${red}FAILED${normal}\tSN: ${serial}"
+                else
+                    if [ $(smartctl -H /dev/$i | grep 'SMART overall-health self-assessment test' | awk '{print $6}') = PASSED ]; then
+                    echo -e "Device: /dev/$i\tStatus: ${green}PASSED${normal}\tSN: ${serial}"
+                    fi
+                fi
+            done
+
+            # Check drive health behind RAID card
+            # Get the number of drives on the server
+            drivecount=$(ssacli ctrl all show config detail | grep -A5 "Physical Drives$" | grep physicaldrive | wc -l);
+            drivecount=$(($drivecount-1));
+            # Loop through each drive
+            for i in $(seq 0 $drivecount); do
+                counter=$(($i+1));
+                driveletter=$(ssacli ctrl all show config detail | grep -E "Disk Name" | awk '{print $3}' | cut -c 6- | sed -n "${counter}p");
+                serial=$(smartctl -a -d cciss,$i /dev/sg1 | grep Serial | awk '{print $3}' | tail -c 4);
+                if [ $(smartctl -a -d cciss,$i /dev/sg1 | grep -iE "Reallocate|Uncorrectable|Pending_Sector|Integrity Errors:" | awk '{print $NF}' | paste -sd+ | bc) -ne 0 ]; then
+                    echo -e "Device: /dev/$driveletter\tStatus: ${red}FAILED${normal}\tSN: ${serial}"
+                else
+                    if [ $(smartctl -H -d cciss,$i /dev/sg1 | grep 'SMART overall-health self-assessment test' | awk '{print $6}') = PASSED ]; then
+                        echo -e "Device: /dev/$driveletter\tStatus: ${green}PASSED${normal}\tSN: ${serial}"
+                    fi
+                fi
+            done
+        else
+            for i in $(lsblk | grep disk | awk '{print $1}'); do
+            serial=$(smartctl -i /dev/$i | grep Serial | awk '{print $3}' | tail -c 4);
+                if [ $(smartctl -a /dev/$i | grep -iE "Reallocate|Uncorrectable|Pending_Sector|Integrity Errors:" | awk '{print $NF}' | paste -sd+ | bc) -ne 0 ]; then
+                    echo -e "Device: /dev/$i\tStatus: ${red}FAILED${normal}\tSN: ${serial}"
+                else
+                    if [ $(smartctl -H /dev/$i | grep 'SMART overall-health self-assessment test' | awk '{print $6}') = PASSED ]; then
+                    echo -e "Device: /dev/$i\tStatus: ${green}PASSED${normal}\tSN: ${serial}"
+                    fi
+                fi
+            done
+        fi
+    else
+        echo -e "\n\nError: hpssacli is not installed. Exiting"
+        exit;
+    fi
+
+# If server does not have a RAID card, use smartctl to get drive health
+else
+    for i in $(lsblk -do NAME,RM,SIZE,RO,TYPE,MOUNTPOINT  | grep -v ' 1 ' | grep disk | awk '{print $1}'); do
+    serial=$(smartctl -i /dev/$i | grep Serial | awk '{print $3}' | tail -c 4);
+        if [ $(smartctl -a /dev/$i | grep -iE "Reallocate|Uncorrectable|Pending_Sector|Integrity Errors:" | awk '{print $NF}' | paste -sd+ | bc) -ne 0 ]; then
+            echo -e "Device: /dev/$i\tStatus: ${red}FAILED${normal}\tSN: ${serial}"
+        else
+            if [ $(smartctl -H /dev/$i | grep 'SMART overall-health self-assessment test' | awk '{print $6}') = PASSED ]; then
+            echo -e "Device: /dev/$i\tStatus: ${green}PASSED${normal}\tSN: ${serial}"
+            fi
+        fi
+    done
+fi
+echo -e "\n"
+
+# run dd disk speed
+echo -e "\n${cyan}Running dd I/O benchmark test...${normal}"
+printf "%-32s\n" "-" | sed 's/\s/-/g'
+dd if=/dev/zero of=test1.img bs=1G count=1 oflag=dsync 2>&1 | awk '/bytes/{print "I/O Speed: \t\t"$(NF-1), $NF}' ; rm -f test1.img
+echo -e "\n"
+
+
+# run an fio test
+echo -e "\n${cyan}Running fio sequential tests (1MB r/w)...${normal}"
+printf "%-41s\n" "" | sed 's/ /-/g'
+
+fio_read=$(fio --randrepeat=1 --ioengine=libaio --direct=1 --gtod_reduce=1 --name=read-test --filename=fio.test --bs=1M --iodepth=16 --size=4G --readwrite=read | grep -E "READ")
+fio_write=$(fio --randrepeat=1 --ioengine=libaio --direct=1 --gtod_reduce=1 --name=write-test --filename=fio.test --bs=1M --iodepth=16 --size=4G --readwrite=write | grep -E "WRITE")
+
+read=$(echo "$fio_read"  | awk '{print $3}' | sed 's/,//' | sed 's/)//' | sed 's/(//')
+write=$(echo "$fio_write" | awk '{print $3}' | sed 's/,//' | sed 's/)//' | sed 's/(//')
+
+echo -e "Read: \t\t\t"$read
+echo -e "Write: \t\t\t"$write
+echo -e "\n"
+
+
+# run 7zip benchmark test
+echo -e "\n${cyan}Running 7zip benchmark test...${normal}"
+printf "%-30s\n" "-" | sed 's/\s/-/g'
+if [ -x "$(command -v 7za)" ]; then
+    command=7za
+elif [ -x "$(command -v 7zr)" ]; then
+    command=7zr
+else
+    command=7zip
+fi
+result=$($command b | tail -2)
+compressing=$(echo "$result" | awk '{print $4}' | head -1)
+decompressing=$(echo "$result" | awk '{print $8}' | head -1)
+total=$(echo "$result" | awk '{print $4}' | tail -1)
+printf "%-24s%s\n" "Compressing:" "${cyan}$compressing${normal}"
+printf "%-24s%s\n" "Decompressing:" "${cyan}$decompressing${normal}"
+
+# Calculate the difference between compressing and decompressing values
+diff=$((decompressing - compressing))
+percent_diff=$((100 * diff / decompressing))
+
+if [ "$percent_diff" -gt 25 ]; then
+  # Change the color of total value to green
+  printf "%-24s%s\n" "Total:" "${yellow}$total${normal}"
+else
+  printf "%-24s%s\n" "Total:" "${green}$total${normal}"
+fi
+
+echo -e "\n"
+
+# Adding delay and "CPU cooling down..." message
+for i in $(seq 1 3); do
+  printf "\r${cyan}CPU cooling down${normal}"
+  for j in $(seq 1 $i); do
+    printf "."
+  done
+  sleep 1
+done
+printf "\r%s" "                                   "
+
+# Run final checklist
+echo -e "\n${cyan}Running final checklist...${normal}"
+printf "%-26s\n" "-" | sed 's/\s/-/g'
+printf 'Hyperthreading: %-8s%s'; sed -e s/1/${green}ENABLED${normal}/ -e s/0/${red}DISABLED${normal}/ /sys/devices/system/cpu/smt/active
+printf 'Virtualization: %-8s%s'; if [ ! -e /dev/kvm ]; then echo "${red}DISABLED${normal}"; else echo "${green}ENABLED${normal}"; fi
+if [ "$(sensors | grep Package)" ]; then
+    printf 'CPU temperature: %-7s%s'; sensors | grep Package | awk '{print $4}' | tr -d "+" | head -1 | cut -c1-2 | awk '{ if ($1 >= 75 && $1 < 94) printf ("%s%s%s\n", "'"$red"'", "'"HOT"'", "'"$normal"'"); else if ($1 > 93) printf ("%s%s%s\n","'"$red"'", "'"VERY HOT"'", "'"$normal"'"); else printf ("%s%s%s\n", "'"$green"'", "'"GOOD"'", "'"$normal"'"); }';
+fi
+if [ -x "$(command -v getenforce)" ]; then
+printf 'SELinux: %-15s%s'; getenforce | sed -e s/Disabled/${red}DISABLED${normal}/ -e s/Enforcing/${green}ENFORCING${normal}/ -e s/Permissive/${yellow}PERMISSIVE${normal}/
+fi
+printf 'IPv6: %-18s%s'; sed -e s/0/${green}ENABLED${normal}/ -e s/1/${red}DISABLED${normal}/ /sys/module/ipv6/parameters/disable
+if [ -x /bin/ping ]; then
+    for site in "Cloudflare:1.1.1.1" "Google:8.8.8.8" "Level3:4.2.2.2" "Mirror:mirror.trouble-free.net"; do
+        name=$(echo "$site" | cut -d: -f1)
+        addr=$(echo "$site" | cut -d: -f2)
+        if ping "$addr" -c 2 > /dev/null 2>&1; then
+            status="${green}GOOD${normal}"
+        else
+            status="${red}oh nooooo${normal}"
+        fi
+        printf "%-23s %s\n" "${name} PING:" "$status"
+    done
+else
+    echo 'Missing /bin/ping'
+fi
+echo -e "\n\n"
+
+# install and run memtester. It is only supported on Ubuntu and Debian
+if [[ "$(cat /etc/os-release | grep PRETTY_NAME |  grep -o '".*"' | sed 's/"//g')" =~ ^Ubuntu.* ]]; then
+    if [ ! -x "$(command -v memtester)" ]; then
+        apt update;
+        apt -y install memtester > /dev/null 2>&1;
+    else
+        echo -e "${cyan}Running memtester quick test...${normal}"
+        printf "%-31s\n" "-" | sed 's/\s/-/g'
+        memtester 1G 1 | grep -A18 "Stuck Address"
+    fi
+fi
+

@@ -1,0 +1,9 @@
+NAME='exim_surbl';
+VERSION='1.9';
+MD5='0b6a71078b3c4ab886d2ebb17e84b3b9';
+EXT='tgz';
+DEPS='patch';
+CONFIG='./install';
+MAKE='';
+MAKEINSTALL='';
+FILES='/usr/sbin/exim /usr/bin/perl /tmp/clamd /usr/local/cpanel/cpanel';

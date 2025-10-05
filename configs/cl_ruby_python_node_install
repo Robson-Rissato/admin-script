@@ -1,0 +1,34 @@
+#!/bin/bash
+
+if [ ! -e /usr/local/cpanel ]; then
+	echo 'No cpanel';
+	exit;
+fi
+
+if [ ! -e /usr/bin/yum ]; then
+	echo 'No yum';
+	exit;
+fi
+
+
+if [ ! -e /etc/yum.repos.d/cloudlinux-ea4.repo ]; then
+        echo -n 'Need to convert....';
+        read wait
+        if [ "$wait" = "y" ]; then
+                cd ~; if [ -f cloudlinux_ea3_to_ea4 ]; then /bin/rm -v cloudlinux_ea3_to_ea4; fi; wget https://repo.cloudlinux.com/cloudlinux/sources/cloudlinux_ea3_to_ea4; sh cloudlinux_ea3_to_ea4 --convert
+        else
+                echo 'exit;';
+        fi
+fi
+
+yum -y groupinstall alt-ruby
+yum -y install alt-python27-devel
+yum -y groupinstall alt-nodejs6 alt-nodejs8 alt-nodejs9 alt-nodejs10 alt-nodejs11 alt-nodejs12
+yum -y install lvemanager lve-utils ea-apache24-mod-alt-passenger
+yum -y groupinstall alt-python
+yum -y install lvemanager lve-utils alt-python-virtualenv ea-apache24-mod-alt-passenger
+systemctl restart cpanel.service
+if [ -f /usr/local/lsws/admin/misc/enable_ruby_python_selector.sh ]; then
+        /usr/local/lsws/admin/misc/enable_ruby_python_selector.sh
+fi
+

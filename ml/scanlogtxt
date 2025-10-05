@@ -1,0 +1,34 @@
+#!/bin/bash
+
+if [ -f /admin/scanner/log.txt ]; then
+	if [ "$1" = "y" ]; then
+	        mydate=`date "+%a %b" --date="-1 day"`
+	else
+		mydate=`date "+%a %b"`;
+	fi
+        for file in $(tail -n 100 /admin/scanner/log.txt | grep "$mydate" | awk '{print $1}' | grep ^/ | grep -v ^EMAIL_FINDSPAMMER | grep -v ^INFO); do
+                dirs=`dirname $file`;
+                if [ -d $dirs ]; then
+                        echo "found $dirs which is a directory";
+                        myuser=`stat -c '%U' $dirs`;
+                        echo "found owner $myuser";
+                        if [ ! "$myuser" = "root" ]; then
+                                if [ -f /var/cpanel/users/$myuser ]; then
+                                        cd $dirs
+                                        /admin/clamscan justdb q norecursive
+
+                                else
+                                        echo 'skipping missing /var/cpanel/users/$myuser';
+                                fi
+
+                        else
+                                echo 'Skipping owner is root';
+                        fi
+                else
+                        echo "$dirs is not a directory";
+                fi
+        done
+else
+        echo '/admin/scanner/log.txt does not exit';
+fi
+

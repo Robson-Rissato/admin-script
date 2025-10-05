@@ -1,0 +1,9 @@
+NAME='reiserfsprogs';
+VERSION='3.6.20';
+MD5='3b3392f59c5d302cf858bc4cf194b258';
+EXT='tar.gz';
+DEPS='gcc gcc-c++';
+CONFIG='./configure';
+MAKE='make';
+MAKEINSTALL='make install';
+#PATCH='p1:reiser-unaligned.patch:d6d6832a05ec82d6a025d483e427c923';

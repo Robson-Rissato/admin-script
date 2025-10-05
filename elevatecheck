@@ -1,0 +1,122 @@
+#!/usr/bin/env bash
+
+if [ ! -x /scripts/elevate-cpanel ]; then
+	echo 'Missing /scripts/elevate-cpanel';
+	exit;
+fi
+
+virt=`/usr/bin/systemd-detect-virt`;
+if [ "$virt" = "kvm" ]; then
+	echo 'system is kvm';
+	if [ ! -f /etc/default/grub ]; then
+		echo 'Missing /etc/default/grub kvm will need to force eth0 as a name to prevent network card changes';
+		exit;
+	else
+		check=`grep biosdevname /etc/default/grub`;
+		if [ "$check" = "" ]; then
+			echo 'Add to /etc/default/grub on CMD_LINE_LINUX';
+			echo 'net.ifnames=0 biosdevname=0';
+			echo 'and rerun grub';
+                        echo 'and rerun grub with (note efi is different): grub2-mkconfig -o /boot/grub2/grub.cfg';
+                        echo
+		fi
+	fi
+
+	if [ ! -f /etc/sysconfig/network-scripts/ifcfg-eth0 ]; then
+		echo 'Missing /etc/sysconfig/network-scripts/ifcfg-eth0 - we want network card called eth0 and dhcp not used';
+		exit;
+	else
+		dhcp=`grep dhcp /etc/sysconfig/network-scripts/ifcfg-eth0`;
+		if [ ! "$dhcp" = "" ]; then
+			echo 'Edit /etc/sysconfig/network-scripts/ifcfg-eth0 and set a static ip';
+			exit;
+		fi
+	fi
+elif [ "$virt" = "openvz" ]; then
+	echo 'Please see the wiki for openvz';
+	if [ -e /usr/bin/python3 ]; then
+		echo 'run: yum remove python3';
+	fi
+
+	if [ -e /usr/bin/certbot ]; then
+		echo 'Certbot must be removed';
+		echo 'yum remove python2-six python2-josepy python2-acme python2-certbot certbot';
+		echo 'yum remove python-six python2-cryptography python-urllib3 python-requests python-requests-toolbelt';
+	fi
+
+	check=`grep ip_resolve /etc/yum.conf`;
+	if [ "$check" = "" ]; then
+		echo 'add ip_resolve=4 to /etc/yum.conf';
+	fi
+
+	for repo in cpanel-plugins.repo cPAddons.repo acronis-cpanel-stable.repo wp-toolkit-cpanel.repo; do
+		if [ -f /etc/yum.repos.d/$repo ]; then
+			echo "Rename this repo before starting: mv /etc/yum.repos.d/$repo /etc/yum.repos.d/$repo.off";
+		fi
+	done
+
+	echo 'checking for old php blockers';
+	rpm -qa | egrep -i '^ea-php5|^ea-php70|^ea-php71'
+
+	/usr/local/bin/ea_current_to_profile --target-os=CentOS_8 --output=/root/ea_profile.json
+
+	echo
+	echo "See wiki for updating mirror.centos.org to vault.centos.org in /etc/yum.repos.d/*.repo";
+	echo
+
+	echo 'Use mariadb 10.5+';
+	mysql -V
+	echo
+	if [ -x /scripts/elevate-cpanel ]; then
+		/scripts/elevate-cpanel --check --no-leapp
+	fi
+
+	echo
+	echo 'NOTE: Run elevate from the hostnode not in the vm';
+	echo
+
+	exit;
+else
+	echo 'It is not recommended to run elevate on bare metal because of no snapshots run at your own risk';
+	efi=`df -m | grep /boot/efi$`;
+	if [ "$efi" = "" ]; then
+		echo 'No efi boot device for bare metal this upgrdae may fail';
+	fi
+fi
+
+if [ -f /etc/yum.repos.d/acronis-cpanel-stable.repo ]; then
+	echo 'Acronis repo detected at /etc/yum.repos.d/acronis-cpanel-stable.repo';
+	echo 'Remove this repo to upgrade and uninstall acronis if installed';
+	lsmod | grep -i snapapi
+fi
+
+kernel=`uname -r | cut -d. -f1`;
+if [ ! "$kernel" = "3" ]; then
+	uname -a
+ 	echo 'On cloudlinux downgrade out of hybrid kernel';
+fi
+
+if [ -f /etc/centos-release-upstream ]; then
+	echo '/etc/centos-release-upstream exists which if rpm -q --whatprovides /etc/centos-release-upstream  shows not owned by any file may conflict with elevate';
+	echo 'cloudlinux notes in TT 1445743 (interserver) it can be renamed';
+	echo
+	sleep 1;
+fi
+
+if [ -d /boot/grub2 ]; then
+	if [ ! -f /boot/grub2/grub.cfg ]; then
+		echo 'You may need to rerun grub';
+		echo 'grub2-mkconfig -o /boot/grub2/grub.cfg';
+		echo
+		sleep 1;
+	fi
+fi
+if [ -x /usr/bin/kcarectl ]; then
+	echo 'Import the new kernelcare key';
+	echo curl -o /etc/pki/rpm-gpg/RPM-GPG-KEY-KernelCare https://repo.cloudlinux.com/kernelcare/RPM-GPG-KEY-KernelCare
+	echo rpm --import /etc/pki/rpm-gpg/RPM-GPG-KEY-KernelCare
+	echo
+	sleep 1;
+fi
+
+/scripts/elevate-cpanel --check

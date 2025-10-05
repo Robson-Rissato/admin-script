@@ -1,0 +1,19 @@
+#!/bin/sh
+
+if [ -e /admin/.info/nokcare ]; then
+	exit;
+fi
+
+if [ ! -x /usr/bin/kcarectl ]; then
+	if [ -x /usr/bin/curl ]; then
+		echo 'Installing kernelcare in 3 seconds';
+		sleep 3s
+		curl -s -L https://kernelcare.com/installer | bash
+	elif [ -x /usr/bin/wget ]; then
+		echo 'Installing kernelcare in 3 seconds';
+                sleep 3s
+		wget -qq -O - https://kernelcare.com/installer | bash
+	else
+		echo 'Curl or wget missing';
+	fi
+fi
